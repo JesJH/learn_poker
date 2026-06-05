@@ -16,11 +16,14 @@ MODEL = "llama3.2"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 TIMEOUT = 45  # seconds
 
-SYSTEM_PROMPT = """You are a quant trading coach. Reply in exactly 3 lines:
+SYSTEM_PROMPT_GRADE = """You are a quant trading coach. Reply in exactly 3 lines:
 Line 1: RIGHT or WRONG — one sentence on whether the math is correct.
 Line 2: The correct calculation using the real numbers provided, nothing else.
-Line 3: One sentence connecting this to trading (no padding, no "in trading...").
-No greetings, no summaries, no encouragement. Just those 3 lines."""
+Line 3: One sentence connecting this to trading. No greetings, no padding."""
+
+SYSTEM_PROMPT_EXPLAIN = """You are a quant trading and poker coach. Answer concisely in 3-5 sentences.
+Give the formula, what it means in plain English, and one concrete trading example.
+No padding, no bullet lists unless the question requires it."""
 
 
 def evaluate_challenge(
@@ -65,7 +68,7 @@ If they skipped the math, push them to engage with it next time. Connect to trad
     try:
         payload = json.dumps({
             "model": MODEL,
-            "system": SYSTEM_PROMPT,
+            "system": SYSTEM_PROMPT_GRADE,
             "prompt": user_prompt,
             "stream": False,
         }).encode()
@@ -122,7 +125,7 @@ Line 2: How it links to their weakness pattern. One sentence only."""
     try:
         payload = json.dumps({
             "model": MODEL,
-            "system": SYSTEM_PROMPT,
+            "system": SYSTEM_PROMPT_GRADE,
             "prompt": user_prompt,
             "stream": False,
         }).encode()
@@ -136,6 +139,27 @@ Line 2: How it links to their weakness pattern. One sentence only."""
             return result.get("response", "No response received.")
     except urllib.error.URLError:
         return "Ollama is not running — start it to enable post-hand AI analysis."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def explain_concept(question: str) -> str:
+    """Answer an open-ended concept question with no format constraints."""
+    try:
+        payload = json.dumps({
+            "model": MODEL,
+            "system": SYSTEM_PROMPT_EXPLAIN,
+            "prompt": question,
+            "stream": False,
+        }).encode()
+        req = urllib.request.Request(
+            OLLAMA_URL, data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            return json.loads(resp.read()).get("response", "No response.")
+    except urllib.error.URLError:
+        return "Ollama is not running — start it to enable AI explanations."
     except Exception as e:
         return f"Error: {e}"
 

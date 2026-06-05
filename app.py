@@ -23,6 +23,7 @@ from poker.progress import (
 from poker import monte_carlo, kelly, ev_calculator
 from poker.quant_concepts import concept_for_hand, get_concept
 from poker import llm_coach
+from poker import kuhn_poker
 
 st.set_page_config(page_title="Learn to Play Poker", page_icon="🃏", layout="wide")
 
@@ -161,7 +162,13 @@ def init_state():
         "pending_challenge": None,          # challenge question awaiting answer
         "challenge_answer": "",             # player's typed answer
         "challenge_feedback": None,         # LLM feedback on their answer
-        "show_quant": False,                # whether quant panel is expanded
+        "show_quant": False,
+        "kuhn_hand": None,
+        "kuhn_step": "p1_act",
+        "kuhn_p2_bet": False,
+        "kuhn_log": [],
+        "kuhn_ev_summary": None,
+        "ask_coach_answer": "",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -234,12 +241,21 @@ def show_setup():
             )
 
     st.divider()
-    if st.button("▶ Start Game", type="primary", use_container_width=True):
-        progress = _default_progress(player_name, chips)
-        progress["tutorial_seen"] = not show_tut
-        save_progress(progress)
-        ss.mode = mode
-        _start_game(player_name, chips, small_blind, progress)
+    col_start, col_kuhn = st.columns(2)
+    with col_start:
+        if st.button("▶ Start Game", type="primary", use_container_width=True):
+            progress = _default_progress(player_name, chips)
+            progress["tutorial_seen"] = not show_tut
+            save_progress(progress)
+            ss.mode = mode
+            _start_game(player_name, chips, small_blind, progress)
+    with col_kuhn:
+        if st.button("🔬 Kuhn Poker Lab (GTO Theory)", use_container_width=True):
+            ss.mode = "quant"
+            ss.phase = "kuhn_lab"
+            ss.kuhn_hand = None
+            ss.kuhn_log = []
+            st.rerun()
 
 
 def _start_game(player_name: str, chips: int, small_blind: int, progress: dict):
@@ -1017,11 +1033,157 @@ def show_game_over():
 
 
 # ---------------------------------------------------------------------------
+# Phase: Kuhn Poker Lab
+# ---------------------------------------------------------------------------
+
+def show_kuhn_lab():
+    with st.sidebar:
+        st.title("🔬 Kuhn Poker Lab")
+        st.markdown("A 3-card toy game that proves Nash Equilibrium exists in poker.")
+        with st.expander("GTO Strategy (Nash Equilibrium)", expanded=True):
+            st.markdown("""
+**Player 1:**
+- K → always Bet
+- Q → always Check
+- J → Bet with prob **1/3** (bluff), Check **2/3**
+
+**Player 2 (facing a bet):**
+- K → always Call
+- Q → Call with prob **1/3**, Fold **2/3**
+- J → always Fold
+
+**Game value:** −1/18 chips/hand for P1.
+""")
+        with st.expander("Trading Analogy"):
+            st.markdown("""
+GTO = the strategy a rational market maker uses.
+Exploiting a deviation = finding alpha against a mispricing counterparty.
+The moment everyone plays GTO, no edge remains — like an efficient market.
+""")
+        if st.button("← Back to setup"):
+            ss.phase = "setup"
+            st.rerun()
+
+    st.title("🔬 Kuhn Poker Lab — GTO vs Exploitative Play")
+    st.markdown("Kuhn Poker strips poker to its mathematical core: 3 cards, 2 players, 1 decision each. The Nash Equilibrium is analytically solvable.")
+    st.divider()
+
+    # EV comparison table
+    st.subheader("Strategy EV Comparison")
+    if ss.kuhn_ev_summary is None:
+        with st.spinner("Running 5,000 simulations per strategy..."):
+            ss.kuhn_ev_summary = kuhn_poker.gto_vs_exploitative_summary()
+    summary = ss.kuhn_ev_summary
+    c1, c2, c3 = st.columns(3)
+    c1.metric("GTO (Nash EQ) EV", f"{summary['ev_gto']:+.4f} chips/hand")
+    c2.metric("Loose strategy EV", f"{summary['ev_loose']:+.4f} chips/hand")
+    c3.metric("Cost of deviation", f"{summary['ev_diff']:+.4f} chips/hand")
+    st.caption(summary["note"])
+    st.divider()
+
+    # Play a hand
+    st.subheader("Play a Hand")
+    if st.button("🃏 Deal new hand", use_container_width=False):
+        ss.kuhn_hand = kuhn_poker.deal()
+        ss.kuhn_step = "p1_act"
+        ss.kuhn_p2_bet = False
+        ss.kuhn_log = []
+        st.rerun()
+
+    hand = ss.kuhn_hand
+    if hand:
+        st.markdown(f"**Your card (Player 1):** `{hand.p1_card}` &nbsp;&nbsp; Opponent's card: `?`")
+        st.caption(f"Pot: {hand.pot} chips (1 ante each). Bet size = 1 chip.")
+
+        if ss.kuhn_step == "p1_act":
+            st.markdown("**Your action:**")
+            col_b, col_c = st.columns(2)
+            gto_rec = kuhn_poker.GTO_P1[hand.p1_card]
+            with col_b:
+                st.caption(f"GTO: Bet {round(gto_rec['bet']*100)}%")
+                if st.button("Bet (1 chip)", use_container_width=True):
+                    hand.p1_action = "bet"
+                    a2 = kuhn_poker.gto_action(kuhn_poker.GTO_P2_FACING_BET, hand.p2_card)
+                    hand.p2_action = a2
+                    hand.result = kuhn_poker.resolve(hand, "bet", a2)
+                    ss.kuhn_log.append(f"You bet → Opponent {a2}s")
+                    ss.kuhn_step = "done"
+                    st.rerun()
+            with col_c:
+                st.caption(f"GTO: Check {round(gto_rec['check']*100)}%")
+                if st.button("Check", use_container_width=True):
+                    hand.p1_action = "check"
+                    a2 = kuhn_poker.gto_action(kuhn_poker.GTO_P2_FACING_CHECK, hand.p2_card)
+                    hand.p2_action = a2
+                    ss.kuhn_log.append(f"You check → Opponent {a2}s")
+                    if a2 == "bet":
+                        ss.kuhn_step = "p1_respond"
+                        ss.kuhn_p2_bet = True
+                    else:
+                        hand.result = kuhn_poker.resolve(hand, "check", "check")
+                        ss.kuhn_step = "done"
+                    st.rerun()
+
+        elif ss.kuhn_step == "p1_respond":
+            st.markdown("**Opponent bet 1 chip. Your response:**")
+            col_ca, col_fo = st.columns(2)
+            with col_ca:
+                if st.button("Call", use_container_width=True):
+                    hand.p1_response = "call"
+                    hand.result = kuhn_poker.resolve(hand, "check", "bet", "call")
+                    ss.kuhn_log.append("You call")
+                    ss.kuhn_step = "done"
+                    st.rerun()
+            with col_fo:
+                if st.button("Fold", use_container_width=True):
+                    hand.p1_response = "fold"
+                    hand.result = kuhn_poker.resolve(hand, "check", "bet", "fold")
+                    ss.kuhn_log.append("You fold")
+                    ss.kuhn_step = "done"
+                    st.rerun()
+
+        if ss.kuhn_step == "done" and hand.result:
+            st.divider()
+            result = hand.result
+            if result["winner"] == "P1":
+                st.success(f"🏆 You win! {result['desc']}  Profit: +{result['p1_profit']} chip(s)")
+            else:
+                st.error(f"💸 You lose. {result['desc']}  P&L: {result['p1_profit']} chip(s)")
+
+            st.markdown(f"**Opponent's card was:** `{hand.p2_card}`")
+
+            gto_p1 = kuhn_poker.GTO_P1[hand.p1_card]
+            st.info(
+                f"**GTO says:** Bet {round(gto_p1['bet']*100)}%, "
+                f"Check {round(gto_p1['check']*100)}% with `{hand.p1_card}`. "
+                + (f"With `{hand.p1_card}` facing a bet: "
+                   f"Call {round(kuhn_poker.GTO_P2_FACING_BET[hand.p1_card]['call']*100)}%"
+                   if ss.kuhn_p2_bet else "")
+            )
+
+        for entry in ss.kuhn_log:
+            st.caption(f"› {entry}")
+
+    st.divider()
+
+    # Ask coach anything
+    st.subheader("💬 Ask the Coach")
+    question = st.text_input("Ask anything about Kuhn Poker, GTO, Nash Equilibrium, or the trading connection:",
+                             key="kuhn_question")
+    if st.button("Ask", key="kuhn_ask") and question.strip():
+        with st.spinner("Thinking..."):
+            answer = llm_coach.explain_concept(question)
+        st.markdown(answer)
+
+
+# ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
 
 if ss.phase == "setup":
     show_setup()
+elif ss.phase == "kuhn_lab":
+    show_kuhn_lab()
 elif ss.phase == "tutorial":
     render_sidebar(ss.progress)
     show_tutorial()
