@@ -22,6 +22,7 @@ from poker.progress import (
 )
 from poker import monte_carlo, kelly, ev_calculator
 from poker.quant_concepts import concept_for_hand, get_concept
+from poker import llm_coach
 
 st.set_page_config(page_title="Learn to Play Poker", page_icon="🃏", layout="wide")
 
@@ -587,37 +588,20 @@ def render_coaching_panel(tip: dict):
 # Quant panel
 # ---------------------------------------------------------------------------
 
-def _ollama_evaluate(concept: dict, question: str, answer: str) -> str:
-    """Send the player's answer to Ollama for feedback. Returns feedback string."""
-    try:
-        import urllib.request, json
-        prompt = (
-            f"You are a quant trading and poker coach. The student just learned about: "
-            f"{concept['title']}.\n\n"
-            f"The challenge question was: {question}\n\n"
-            f"The student answered: {answer}\n\n"
-            f"Evaluate their answer in 3-4 sentences. Be specific about what they got right "
-            f"or wrong mathematically. If they made an error, show the correct calculation. "
-            f"Connect it back to how this concept applies in quantitative trading."
-        )
-        payload = json.dumps({
-            "model": "llama3",
-            "prompt": prompt,
-            "stream": False,
-        }).encode()
-        req = urllib.request.Request(
-            "http://localhost:11434/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-            return result.get("response", "No response from Ollama.")
-    except Exception as e:
-        return (
-            f"Ollama is not running — install it at ollama.com and run `ollama pull llama3` "
-            f"to enable AI feedback. Your answer has been recorded."
-        )
+def _build_game_context() -> dict:
+    """Package current hand's quant numbers for the LLM."""
+    eq = ss.quant_equity or {}
+    ev = ss.quant_ev or {}
+    kl = ss.quant_kelly or {}
+    game = ss.game
+    return {
+        "pot": game.pot if game else 0,
+        "to_call": ss.to_call,
+        "equity": eq.get("win_pct", 0),
+        "ev_call": ev.get("ev_call"),
+        "ev_raise": ev.get("ev_raise"),
+        "kelly_fraction": kl.get("full_kelly_fraction"),
+    }
 
 
 def render_quant_panel():
@@ -696,8 +680,10 @@ def render_quant_panel():
             if st.button("Submit answer to AI coach", type="primary"):
                 ss.challenge_answer = answer
                 with st.spinner("Evaluating your answer..."):
-                    ss.challenge_feedback = _ollama_evaluate(
-                        prev, prev["challenge"], answer
+                    ss.challenge_feedback = llm_coach.evaluate_challenge(
+                        concept=prev,
+                        player_answer=answer,
+                        game_context=_build_game_context(),
                     )
                 st.rerun()
 
@@ -932,6 +918,27 @@ def show_showdown():
 
     st.divider()
     _render_hand_review(game, human.name)
+
+    if ss.mode == "quant":
+        st.divider()
+        st.subheader("🤖 AI Coach — Post-Hand Analysis")
+        if not llm_coach.is_running():
+            st.caption("Ollama is not running — start it to enable AI analysis.")
+        else:
+            if st.button("Ask AI coach to review this hand", use_container_width=True):
+                weakness = get_weakness_banner(ss.progress) if ss.progress else None
+                ctx = _build_game_context()
+                ctx["pot"] = game.pot
+                with st.spinner("Analysing hand..."):
+                    analysis = llm_coach.post_hand_analysis(
+                        hand_decisions=game.history.decisions,
+                        player_name=human.name,
+                        community_cards=game.community_cards,
+                        weakness=weakness,
+                        game_context=ctx,
+                    )
+                st.markdown(analysis)
+
     st.divider()
     _render_chip_counts(game.players)
 
