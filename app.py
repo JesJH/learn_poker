@@ -20,6 +20,8 @@ from poker.progress import (
     load_progress, save_progress, record_hand_result, record_decision,
     get_weakness_banner, win_rate, _default_progress,
 )
+from poker import monte_carlo, kelly, ev_calculator
+from poker.quant_concepts import concept_for_hand, get_concept
 
 st.set_page_config(page_title="Learn to Play Poker", page_icon="🃏", layout="wide")
 
@@ -142,13 +144,23 @@ def init_state():
         "action_queue": [],
         "human_index": 0,
         "last_tip": None,
-        "show_tip": False,          # tips are hidden until user clicks
+        "show_tip": False,
         "last_feedback": None,
         "hand_review_notes": [],
         "street_log": [],
         "hand_number": 0,
         "to_call": 0,
         "progress": None,
+        # Quant mode
+        "mode": "standard",                 # "standard" or "quant"
+        "quant_equity": None,               # latest Monte Carlo result dict
+        "quant_ev": None,                   # latest EV calculation dict
+        "quant_kelly": None,                # latest Kelly result dict
+        "current_concept": None,            # concept introduced this hand
+        "pending_challenge": None,          # challenge question awaiting answer
+        "challenge_answer": "",             # player's typed answer
+        "challenge_feedback": None,         # LLM feedback on their answer
+        "show_quant": False,                # whether quant panel is expanded
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -194,6 +206,17 @@ def show_setup():
         small_blind = st.number_input("Small blind", min_value=5, value=10, step=5)
         st.caption(f"Big blind: ${small_blind * 2}")
 
+        st.subheader("Game Mode")
+        mode = st.radio(
+            "Choose your mode",
+            options=["standard", "quant"],
+            format_func=lambda m: {
+                "standard": "🃏 Standard — coaching focused on poker strategy",
+                "quant": "🔬 Quant Trading — EV, Kelly Criterion, and trading theory",
+            }[m],
+            label_visibility="collapsed",
+        )
+
     with col2:
         st.subheader("Your Opponents")
         st.markdown("""
@@ -202,12 +225,19 @@ def show_setup():
 - **Casey (Aggressive)** — raises frequently, puts pressure on you
         """)
         show_tut = st.checkbox("Show tutorial before first hand", value=True)
+        if mode == "quant":
+            st.info(
+                "**Quant mode** teaches one concept per hand — Expected Value, "
+                "Kelly Criterion, Bayesian Updating, and more. After learning each concept, "
+                "you'll be asked to apply it on the next hand and explain your reasoning."
+            )
 
     st.divider()
     if st.button("▶ Start Game", type="primary", use_container_width=True):
         progress = _default_progress(player_name, chips)
         progress["tutorial_seen"] = not show_tut
         save_progress(progress)
+        ss.mode = mode
         _start_game(player_name, chips, small_blind, progress)
 
 
@@ -314,11 +344,22 @@ def start_hand():
     ss.street_log = []
     ss.last_tip = None
     ss.show_tip = False
+    ss.show_quant = False
     ss.last_feedback = None
     ss.hand_review_notes = []
+    ss.quant_equity = None
+    ss.quant_ev = None
+    ss.quant_kelly = None
+    ss.challenge_answer = ""
+    ss.challenge_feedback = None
 
     dealer_idx = ss.dealer_index % len(game.players)
     game.start_hand(dealer_idx)
+
+    # Quant mode: load concept for this hand
+    if ss.mode == "quant":
+        ss.current_concept = concept_for_hand(ss.hand_number)
+        # If there's a pending challenge from last hand, keep it visible
 
     ss.current_bet = game.big_blind
     ss.phase = "betting"
@@ -352,7 +393,29 @@ def _advance_to_human_or_ai():
                 to_call, game.pot,
                 ss.human_index, ss.dealer_index, len(game.players),
             )
-            ss.show_tip = False  # reset so tip is hidden until player clicks
+            ss.show_tip = False
+
+            # Quant mode: run Monte Carlo + EV + Kelly
+            if ss.mode == "quant":
+                num_opponents = len([p for p in game.players if not p.folded]) - 1
+                eq = monte_carlo.run(
+                    player.hole_cards, game.community_cards,
+                    num_opponents=max(num_opponents, 1),
+                    num_simulations=1000,
+                )
+                ss.quant_equity = eq
+                min_raise = max(ss.current_bet * 2, game.big_blind)
+                ss.quant_ev = ev_calculator.compute(
+                    equity=eq["win_pct"],
+                    pot=game.pot,
+                    to_call=to_call,
+                    raise_amount=min_raise,
+                )
+                ss.quant_kelly = kelly.kelly_fraction(
+                    equity=eq["win_pct"],
+                    pot=game.pot,
+                    to_call=to_call,
+                )
             return
 
         # AI acts
@@ -521,6 +584,129 @@ def render_coaching_panel(tip: dict):
 
 
 # ---------------------------------------------------------------------------
+# Quant panel
+# ---------------------------------------------------------------------------
+
+def _ollama_evaluate(concept: dict, question: str, answer: str) -> str:
+    """Send the player's answer to Ollama for feedback. Returns feedback string."""
+    try:
+        import urllib.request, json
+        prompt = (
+            f"You are a quant trading and poker coach. The student just learned about: "
+            f"{concept['title']}.\n\n"
+            f"The challenge question was: {question}\n\n"
+            f"The student answered: {answer}\n\n"
+            f"Evaluate their answer in 3-4 sentences. Be specific about what they got right "
+            f"or wrong mathematically. If they made an error, show the correct calculation. "
+            f"Connect it back to how this concept applies in quantitative trading."
+        )
+        payload = json.dumps({
+            "model": "llama3",
+            "prompt": prompt,
+            "stream": False,
+        }).encode()
+        req = urllib.request.Request(
+            "http://localhost:11434/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+            return result.get("response", "No response from Ollama.")
+    except Exception as e:
+        return (
+            f"Ollama is not running — install it at ollama.com and run `ollama pull llama3` "
+            f"to enable AI feedback. Your answer has been recorded."
+        )
+
+
+def render_quant_panel():
+    """Full quant analysis panel — shown when player clicks the button in quant mode."""
+    eq = ss.quant_equity
+    ev = ss.quant_ev
+    kl = ss.quant_kelly
+    concept = ss.current_concept
+
+    with st.container(border=True):
+        st.markdown("### 🔬 Quant Analysis")
+
+        # --- Equity (Monte Carlo) ---
+        if eq:
+            st.markdown("**Equity** *(Monte Carlo, n=1,000 simulations)*")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Win", f"{round(eq['win_pct']*100, 1)}%")
+            c2.metric("Tie", f"{round(eq['tie_pct']*100, 1)}%")
+            c3.metric("Lose", f"{round(eq['lose_pct']*100, 1)}%")
+            st.caption(f"95% confidence interval: ±{round(eq['std_error']*100, 1)}%")
+            st.divider()
+
+        # --- EV at decision node ---
+        if ev:
+            st.markdown("**Expected Value at this decision node**")
+            ev_fold = ev["ev_fold"]
+            ev_call = ev["ev_call"]
+            ev_raise = ev["ev_raise"]
+
+            ev_cols = st.columns(3)
+            ev_cols[0].metric("EV(Fold)", f"${ev_fold:.2f}")
+            label = "EV(Call)" if ss.to_call > 0 else "EV(Check)"
+            color_call = "normal" if ev_call >= 0 else "inverse"
+            ev_cols[1].metric(label, f"${ev_call:.2f}",
+                              delta="+" if ev_call > 0 else None)
+            if ev_raise is not None:
+                ev_cols[2].metric("EV(Raise)*", f"${ev_raise:.2f}",
+                                  delta="+" if ev_raise > 0 else None)
+            st.caption("*Raise EV assumes 30% fold equity — opponents fold 30% of the time to a raise.")
+            best = ev.get("best_action", "")
+            st.info(f"**Highest EV action: {best}**")
+            st.divider()
+
+        # --- Kelly Criterion ---
+        if kl and kl.get("full_kelly_fraction") is not None:
+            st.markdown("**Kelly Criterion — Optimal Bet Sizing**")
+            k1, k2 = st.columns(2)
+            k1.metric("Full Kelly fraction", f"{round(kl['full_kelly_fraction']*100, 1)}% of pot")
+            k2.metric("½ Kelly (recommended)", f"${kl['half_kelly_bet']}")
+            st.caption(kl["explanation"])
+            st.divider()
+
+        # --- Concept card for this hand ---
+        if concept:
+            with st.expander(f"📐 Theory this hand: {concept['title']}", expanded=True):
+                st.latex(concept["formula"])
+                st.markdown(concept["explanation"])
+                st.markdown(f"**In trading:** {concept['trading']}")
+                st.caption(f"📚 {concept['reference']}")
+
+        # --- Challenge question (from previous hand's concept) ---
+        if ss.pending_challenge:
+            prev = ss.pending_challenge
+            st.divider()
+            st.markdown(f"### ✏️ Challenge: {prev['title']}")
+            st.markdown(prev["challenge"])
+
+            answer = st.text_area(
+                "Your answer",
+                value=ss.challenge_answer,
+                key="challenge_input",
+                placeholder="Show your working — formula, numbers, conclusion...",
+                height=120,
+            )
+
+            if st.button("Submit answer to AI coach", type="primary"):
+                ss.challenge_answer = answer
+                with st.spinner("Evaluating your answer..."):
+                    ss.challenge_feedback = _ollama_evaluate(
+                        prev, prev["challenge"], answer
+                    )
+                st.rerun()
+
+            if ss.challenge_feedback:
+                st.markdown("**Coach feedback:**")
+                st.success(ss.challenge_feedback)
+
+
+# ---------------------------------------------------------------------------
 # Phase: betting
 # ---------------------------------------------------------------------------
 
@@ -587,16 +773,27 @@ def show_game():
 
     with right:
         waiting_for_human = ss.action_queue and ss.action_queue[0] == ss.human_index
-        if waiting_for_human and ss.last_tip:
-            if not ss.show_tip:
-                if st.button("💡 Show coaching tip", use_container_width=True):
-                    ss.show_tip = True
-                    st.rerun()
-            else:
-                render_coaching_panel(ss.last_tip)
-                if st.button("🙈 Hide tip", use_container_width=True):
-                    ss.show_tip = False
-                    st.rerun()
+        if waiting_for_human:
+            if ss.mode == "quant":
+                if not ss.show_quant:
+                    if st.button("🔬 Show quant analysis", use_container_width=True):
+                        ss.show_quant = True
+                        st.rerun()
+                else:
+                    render_quant_panel()
+                    if st.button("🙈 Hide analysis", use_container_width=True):
+                        ss.show_quant = False
+                        st.rerun()
+            elif ss.last_tip:
+                if not ss.show_tip:
+                    if st.button("💡 Show coaching tip", use_container_width=True):
+                        ss.show_tip = True
+                        st.rerun()
+                else:
+                    render_coaching_panel(ss.last_tip)
+                    if st.button("🙈 Hide tip", use_container_width=True):
+                        ss.show_tip = False
+                        st.rerun()
 
     st.divider()
 
@@ -672,13 +869,18 @@ def _advance_to_next_hand(game: GameState, human_won: bool):
     if ss.progress:
         record_hand_result(ss.progress, won=human_won, chips_end=human.chips)
 
+    # Quant mode: current concept becomes the pending challenge for next hand
+    if ss.mode == "quant" and ss.current_concept:
+        ss.pending_challenge = ss.current_concept
+        ss.challenge_answer = ""
+        ss.challenge_feedback = None
+
     ss.dealer_index = (ss.dealer_index + 1) % len(game.players)
     game.players = [p for p in game.players if p.chips > 0]
 
     if len(game.players) < 2 or human.chips <= 0:
         ss.phase = "game_over"
     else:
-        # Re-find human index after removing broke players
         for i, p in enumerate(game.players):
             if p.player_type == PlayerType.HUMAN:
                 ss.human_index = i
