@@ -16,25 +16,11 @@ MODEL = "llama3.2"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 TIMEOUT = 45  # seconds
 
-SYSTEM_PROMPT = """You are a rigorous quantitative finance and poker coach with deep expertise in:
-- Expected Value (EV) calculation and decision theory
-- The Kelly Criterion and bankroll management
-- Bayesian reasoning and probability
-- How game theory applies to trading: market making, risk management, position sizing
-
-Your student is learning to apply quantitative trading concepts through Texas Hold'em poker.
-They are building intuition for EV-based decision making, which is the foundation of how firms
-like Jane Street, SIG, and Citadel approach trading.
-
-Your coaching style:
-- Always check the student's arithmetic against the real numbers provided
-- If they made a calculation error, show the correct working step by step
-- Be direct about mistakes — do not soften incorrect answers
-- Connect every poker concept back to its trading equivalent with a concrete example
-- Use precise mathematical language (equity, expected value, variance, Kelly fraction)
-- Keep responses to 4-6 sentences — dense and specific, not padded
-
-Do not introduce topics not covered by the concept at hand. Stay focused."""
+SYSTEM_PROMPT = """You are a quant trading coach. Reply in exactly 3 lines:
+Line 1: RIGHT or WRONG — one sentence on whether the math is correct.
+Line 2: The correct calculation using the real numbers provided, nothing else.
+Line 3: One sentence connecting this to trading (no padding, no "in trading...").
+No greetings, no summaries, no encouragement. Just those 3 lines."""
 
 
 def evaluate_challenge(
@@ -125,20 +111,13 @@ def post_hand_analysis(
         if weakness else "No weakness pattern identified yet (fewer than 5 decisions tracked)."
     )
 
-    user_prompt = f"""Post-hand analysis request.
+    user_prompt = f"""Hand: board={community_cards}, equity={round(game_context.get('equity', 0)*100,1)}%, pot=${game_context.get('pot','?')}
+Decisions: {decisions_text if decisions_text else 'folded pre-flop'}
+Weakness: {weakness_text}
 
-Final community cards: {community_cards}
-Monte Carlo equity at last decision: {round(game_context.get('equity', 0) * 100, 1)}%
-Final pot: ${game_context.get('pot', 'unknown')}
-
-Player decisions this hand:
-{decisions_text if decisions_text else '[Player folded pre-flop or no decisions recorded]'}
-
-Long-term pattern: {weakness_text}
-
-In 4-5 sentences: Was the overall strategy this hand sound? Identify the single most important
-decision that changed the outcome. How does it connect to the player's identified weakness?
-Be specific — name the street and the action."""
+Reply in exactly 2 lines:
+Line 1: The single decision that most hurt or helped — name the street and action, say why in one sentence.
+Line 2: How it links to their weakness pattern. One sentence only."""
 
     try:
         payload = json.dumps({
