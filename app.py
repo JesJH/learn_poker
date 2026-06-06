@@ -185,78 +185,111 @@ ss = st.session_state
 
 def show_setup():
     st.title("🃏 Learn to Play Poker")
-    st.markdown("### Texas Hold'em — play hands, get coaching, improve over time")
-    st.divider()
+    st.caption("Texas Hold'em — play hands, get coached, improve over time")
 
     saved = load_progress()
 
     if saved:
-        st.success(f"Welcome back, **{saved['player_name']}**! "
-                   f"You have **${saved['chips']}** chips and have played "
-                   f"**{saved['hands_played']}** hands.")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("▶ Continue where I left off", type="primary", use_container_width=True):
+        st.divider()
+        wr = win_rate(saved)
+        st.success(
+            f"Welcome back, **{saved['player_name']}**!  "
+            f"${saved['chips']} chips · {saved['hands_played']} hands played"
+            + (f" · {wr}% win rate" if wr else "")
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("▶ Continue", type="primary", use_container_width=True):
                 _start_game(saved["player_name"], saved["chips"],
                             small_blind=10, progress=saved)
-        with col2:
+        with c2:
             if st.button("🔄 Start fresh", use_container_width=True):
-                PROGRESS_FILE_PATH = __import__("pathlib").Path("progress.json")
-                if PROGRESS_FILE_PATH.exists():
-                    PROGRESS_FILE_PATH.unlink()
+                import pathlib
+                p = pathlib.Path("progress.json")
+                if p.exists():
+                    p.unlink()
                 st.rerun()
         return
 
-    col1, col2 = st.columns(2)
-    with col1:
+    st.divider()
+
+    # --- Quick setup row ---
+    c_name, c_chips, c_blind, c_tut = st.columns([2, 1.5, 1.5, 2])
+    with c_name:
         player_name = st.text_input("Your name", value="Player", max_chars=20)
+    with c_chips:
         chips = st.number_input("Starting chips", min_value=200, max_value=10000,
                                 value=1000, step=100)
+    with c_blind:
         small_blind = st.number_input("Small blind", min_value=5, value=10, step=5)
         st.caption(f"Big blind: ${small_blind * 2}")
-
-        st.subheader("Game Mode")
-        mode = st.radio(
-            "Choose your mode",
-            options=["standard", "quant"],
-            format_func=lambda m: {
-                "standard": "🃏 Standard — coaching focused on poker strategy",
-                "quant": "🔬 Quant Trading — EV, Kelly Criterion, and trading theory",
-            }[m],
-            label_visibility="collapsed",
-        )
-
-    with col2:
-        st.subheader("Your Opponents")
-        st.markdown("""
-- **Alex (Tight)** — only plays strong hands, won't bluff often
-- **Blake (Loose)** — calls almost everything, hard to push off hands
-- **Casey (Aggressive)** — raises frequently, puts pressure on you
-        """)
-        show_tut = st.checkbox("Show tutorial before first hand", value=True)
-        if mode == "quant":
-            st.info(
-                "**Quant mode** teaches one concept per hand — Expected Value, "
-                "Kelly Criterion, Bayesian Updating, and more. After learning each concept, "
-                "you'll be asked to apply it on the next hand and explain your reasoning."
-            )
+    with c_tut:
+        st.write("")  # vertical alignment spacer
+        show_tut = st.checkbox("Show tutorial first", value=True)
 
     st.divider()
-    col_start, col_kuhn = st.columns(2)
-    with col_start:
+
+    # --- Game mode selector ---
+    st.markdown("#### Choose your mode")
+    mode_cols = st.columns(2)
+
+    with mode_cols[0]:
+        st.markdown("""
+<div style="border:2px solid #4caf50;border-radius:10px;padding:16px 18px;height:100%;">
+<div style="font-size:1.2rem;font-weight:bold;margin-bottom:6px;">🃏 Standard <span style="font-size:0.7rem;background:#4caf50;color:#fff;border-radius:4px;padding:2px 7px;margin-left:6px;">Recommended</span></div>
+<div style="font-size:0.85rem;color:#ccc;line-height:1.5;">
+Learn poker strategy through play.<br><br>
+• Hover-to-reveal coaching tips before each action<br>
+• Instant feedback grading every decision<br>
+• Per-street hand review after each hand<br>
+• Adaptive tracking of your leaks
+</div>
+</div>
+""", unsafe_allow_html=True)
+
+    with mode_cols[1]:
+        st.markdown("""
+<div style="border:1px solid #444;border-radius:10px;padding:16px 18px;height:100%;">
+<div style="font-size:1.2rem;font-weight:bold;margin-bottom:6px;">🔬 Quant Trading</div>
+<div style="font-size:0.85rem;color:#ccc;line-height:1.5;">
+Learn the math behind every decision.<br><br>
+• Live EV, Kelly Criterion, and equity analysis<br>
+• One quant concept taught per hand<br>
+• Challenge questions to apply what you learned<br>
+• Kuhn Poker Lab for GTO theory
+</div>
+</div>
+""", unsafe_allow_html=True)
+
+    mode = st.radio(
+        "mode_select",
+        options=["standard", "quant"],
+        format_func=lambda m: {"standard": "🃏 Standard (Recommended)", "quant": "🔬 Quant Trading"}[m],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+    st.divider()
+
+    # --- Opponents info + start ---
+    left, right = st.columns([2, 1])
+    with left:
+        st.markdown("**Your opponents:**  Alex (Tight) · Blake (Loose) · Casey (Aggressive)")
+        st.caption("Tight = only plays strong hands · Loose = calls most things · Aggressive = raises to pressure you")
+    with right:
         if st.button("▶ Start Game", type="primary", use_container_width=True):
             progress = _default_progress(player_name, chips)
             progress["tutorial_seen"] = not show_tut
             save_progress(progress)
             ss.mode = mode
             _start_game(player_name, chips, small_blind, progress)
-    with col_kuhn:
-        if st.button("🔬 Kuhn Poker Lab (GTO Theory)", use_container_width=True):
-            ss.mode = "quant"
-            ss.phase = "kuhn_lab"
-            ss.kuhn_hand = None
-            ss.kuhn_log = []
-            st.rerun()
+
+    if st.button("🔬 Kuhn Poker Lab — GTO Theory", use_container_width=False):
+        ss.mode = "quant"
+        ss.phase = "kuhn_lab"
+        ss.kuhn_hand = None
+        ss.kuhn_log = []
+        st.rerun()
 
 
 def _start_game(player_name: str, chips: int, small_blind: int, progress: dict):
