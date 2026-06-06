@@ -854,7 +854,7 @@ def render_poker_table(game, human, human_index: int, dealer_index: int):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-body {{ background: #0d1117; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 12px 6px 8px; }}
+body {{ background: #0d1117; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 12px 6px 16px; }}
 .opps {{ display: flex; justify-content: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }}
 .felt {{
     background: radial-gradient(ellipse at center,#1b6b2e 0%,#0e4a1c 65%,#072e10 100%);
@@ -898,9 +898,16 @@ body {{ background: #0d1117; font-family: -apple-system, BlinkMacSystemFont, san
         <div style="font-size:11px;margin-top:4px;color:{h_status_color};font-weight:bold;">● {h_status_text}</div>
     </div>
 </div>
+<script>
+  // Tell the parent iframe to resize to fit actual content
+  window.onload = function() {{
+    const h = document.body.scrollHeight;
+    window.parent.postMessage({{type: 'streamlit:setFrameHeight', height: h}}, '*');
+  }};
+</script>
 </body></html>"""
 
-    components.html(html, height=460, scrolling=False)
+    components.html(html, height=540, scrolling=False)
 
 
 def render_coaching_tip_hover(tip: dict):
@@ -976,7 +983,7 @@ body {{ background: transparent; font-family: -apple-system, BlinkMacSystemFont,
 </div>
 </body></html>"""
 
-    components.html(html, height=320, scrolling=False)
+    components.html(html, height=400, scrolling=False)
 
 
 # ---------------------------------------------------------------------------
