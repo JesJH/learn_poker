@@ -11,6 +11,7 @@ State machine phases (stored in st.session_state):
   game_over      → player is out of chips
 """
 import streamlit as st
+import streamlit.components.v1 as components
 from poker.player import Player, PlayerType, Action
 from poker.game import GameState, Street
 from poker.ai import decide_action as ai_decide
@@ -709,6 +710,186 @@ def render_quant_panel():
 
 
 # ---------------------------------------------------------------------------
+# Poker table visual
+# ---------------------------------------------------------------------------
+
+def _player_status_info(player):
+    if player.folded:
+        return "Folded", "#888888"
+    elif player.is_all_in:
+        return "All-in", "#ff6b6b"
+    return "Active", "#4caf50"
+
+
+def _table_card(card, hidden=False) -> str:
+    if hidden:
+        return '<span style="display:inline-block;background:#1a5276;color:white;border:1px solid #888;border-radius:4px;padding:2px 8px;font-size:16px;margin:1px;min-width:28px;text-align:center;">🂠</span>'
+    color = "#cc0000" if card.suit in ("♥", "♦") else "#222"
+    return (
+        f'<span style="display:inline-block;background:#f8f8f8;color:{color};'
+        f'border:1px solid #999;border-radius:4px;padding:2px 8px;font-size:16px;'
+        f'margin:1px;min-width:28px;text-align:center;font-weight:bold;">'
+        f'{card.rank}{card.suit}</span>'
+    )
+
+
+def render_poker_table(game, human, human_index: int, dealer_index: int):
+    players = game.players
+    n = len(players)
+
+    sb_index = (dealer_index + 1) % n
+    bb_index = (dealer_index + 2) % n
+
+    def _role_badge(idx):
+        badges = []
+        if idx % n == dealer_index % n:
+            badges.append('<span style="background:#ffd700;color:#111;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:bold;margin-right:3px;">D</span>')
+        if idx % n == sb_index:
+            badges.append('<span style="background:#4fc3f7;color:#111;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:bold;margin-right:3px;">SB</span>')
+        if idx % n == bb_index:
+            badges.append('<span style="background:#ef9a9a;color:#111;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:bold;margin-right:3px;">BB</span>')
+        return "".join(badges)
+
+    opp_seats = ""
+    for i, p in enumerate(players):
+        if i == human_index:
+            continue
+        status_text, status_color = _player_status_info(p)
+        cards = "".join(_table_card(c, hidden=True) for c in p.hole_cards)
+        badges = _role_badge(i)
+        fade = "opacity:0.4;" if p.folded else ""
+        short = p.name.split("(")[0].strip()
+        opp_seats += f"""
+        <div style="background:rgba(15,20,42,0.95);border:1px solid #2a3050;border-radius:10px;
+                    padding:10px 12px;text-align:center;min-width:130px;position:relative;{fade}">
+            <div style="margin-bottom:3px;">{badges}</div>
+            <div style="font-weight:bold;color:#ddd;font-size:13px;margin-bottom:4px;">{short}</div>
+            <div style="margin:5px 0;">{cards}</div>
+            <div style="font-size:12px;color:#ffd700;margin:3px 0;">💰 ${p.chips}</div>
+            <div style="font-size:11px;color:#999;">Bet: ${p.bet_this_round}</div>
+            <div style="font-size:11px;margin-top:3px;color:{status_color};">● {status_text}</div>
+        </div>"""
+
+    if game.community_cards:
+        comm = "".join(_table_card(c) for c in game.community_cards)
+    else:
+        comm = '<span style="color:rgba(255,255,255,0.5);font-size:13px;">Pre-flop — no cards yet</span>'
+
+    h_status_text, h_status_color = _player_status_info(human)
+    h_cards = "".join(_table_card(c) for c in human.hole_cards)
+    h_dealer = _role_badge(human_index)
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{ background: #0d1117; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px 8px 8px; }}
+</style>
+</head><body>
+<div style="display:flex;justify-content:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+    {opp_seats}
+</div>
+<div style="background:radial-gradient(ellipse at center,#1b6b2e 0%,#0e4a1c 65%,#072e10 100%);
+            border:7px solid #4a2e0a;border-radius:100px/55px;padding:18px 40px;
+            margin:0 auto;max-width:520px;text-align:center;
+            box-shadow:0 6px 20px rgba(0,0,0,0.7);">
+    <div style="color:rgba(255,255,255,0.45);font-size:10px;text-transform:uppercase;letter-spacing:2px;margin-bottom:7px;">
+        Community Cards — {game.street.value}
+    </div>
+    <div style="margin:5px 0;">{comm}</div>
+    <div style="color:#ffd700;font-size:15px;font-weight:bold;margin-top:9px;">💰 Pot: ${game.pot}</div>
+</div>
+<div style="display:flex;justify-content:center;margin-top:12px;">
+    <div style="background:rgba(12,32,12,0.95);border:2px solid #ffd700;border-radius:10px;
+                padding:10px 14px;text-align:center;min-width:150px;position:relative;">
+        <div style="margin-bottom:4px;">{h_dealer}</div>
+        <div style="color:#ffd700;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">You</div>
+        <div style="font-weight:bold;color:#ddd;font-size:13px;margin-bottom:4px;">{human.name}</div>
+        <div style="margin:5px 0;">{h_cards}</div>
+        <div style="font-size:12px;color:#ffd700;margin:3px 0;">💰 ${human.chips}</div>
+        <div style="font-size:11px;color:#999;">Bet: ${human.bet_this_round}</div>
+        <div style="font-size:11px;margin-top:3px;color:{h_status_color};">● {h_status_text}</div>
+    </div>
+</div>
+</body></html>"""
+
+    components.html(html, height=400, scrolling=False)
+
+
+def render_coaching_tip_hover(tip: dict):
+    """Show coaching tip on hover — no click needed."""
+    if not tip:
+        return
+
+    level = tip["tip_level"]
+    icon = {"success": "✅", "warning": "⚠️", "info": "💡"}.get(level, "💡")
+    qual_colors = {
+        "Premium": "#4caf50", "Strong": "#4caf50",
+        "Playable": "#ffd700", "Marginal": "#ff9800", "Weak": "#f44336",
+    }
+    qcolor = qual_colors.get(tip["hand_quality"], "#aaa")
+    rec = tip.get("recommendation", "").replace('"', "&quot;").replace("<", "&lt;")
+    your_hand = tip.get("your_hand", "").replace("<", "&lt;")
+    pos_advice = tip.get("position_advice", "").replace("<", "&lt;")
+    pot_odds_text = tip.get("pot_odds", "").replace("<", "&lt;") if tip.get("pot_odds") else ""
+
+    extras = ""
+    if your_hand:
+        extras += f'<div style="font-size:13px;color:#ccc;margin-bottom:5px;line-height:1.4;"><b>Your hand:</b> {your_hand}</div>'
+    if pot_odds_text:
+        extras += f'<div style="font-size:13px;color:#ccc;margin-bottom:5px;line-height:1.4;"><b>Pot odds:</b> {pot_odds_text}</div>'
+    if pos_advice:
+        extras += f'<div style="font-size:13px;color:#ccc;margin-bottom:5px;line-height:1.4;"><b>Position:</b> {pos_advice}</div>'
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{ background: transparent; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 4px 0; }}
+.wrap {{ position: relative; display: inline-block; }}
+.trigger {{
+    display: inline-block;
+    background: #1565c0;
+    color: #fff;
+    border-radius: 8px;
+    padding: 8px 18px;
+    font-size: 14px;
+    cursor: default;
+    user-select: none;
+}}
+.popup {{
+    display: none;
+    position: absolute;
+    top: 110%;
+    left: 0;
+    background: #1a1f2e;
+    border: 1px solid #3a4060;
+    border-radius: 10px;
+    padding: 14px 16px;
+    min-width: 300px;
+    max-width: 400px;
+    z-index: 1000;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+    text-align: left;
+}}
+.wrap:hover .popup {{ display: block; }}
+</style>
+</head><body>
+<div class="wrap">
+    <div class="trigger">{icon} Hover for coaching tip</div>
+    <div class="popup">
+        <div style="font-weight:bold;color:#fff;font-size:15px;margin-bottom:8px;">{icon} Coaching Tip</div>
+        <div style="font-size:13px;color:{qcolor};margin-bottom:6px;">Hand: <b>{tip['hand_quality']}</b> &nbsp;·&nbsp; Win: ~{tip['equity_pct']}%</div>
+        {extras}
+        <div style="font-size:13px;color:#90caf9;font-style:italic;margin-top:8px;border-top:1px solid #333;padding-top:8px;">💬 {rec}</div>
+    </div>
+</div>
+</body></html>"""
+
+    components.html(html, height=280, scrolling=False)
+
+
+# ---------------------------------------------------------------------------
 # Phase: betting
 # ---------------------------------------------------------------------------
 
@@ -718,94 +899,58 @@ def show_game():
 
     render_sidebar(ss.progress)
 
-    # Header
-    col_title, col_chips = st.columns([3, 1])
-    with col_title:
-        st.title(f"Hand #{ss.hand_number}  —  {game.street.value}")
-    with col_chips:
-        st.metric("Your chips", f"${human.chips}")
-        st.metric("Pot", f"${game.pot}")
+    st.title(f"Hand #{ss.hand_number}  —  {game.street.value}")
 
-    # Adaptive weakness banner
     if ss.progress:
         weakness = get_weakness_banner(ss.progress)
         if weakness:
             st.warning(f"**📌 Focus area:** {weakness['label']} — {weakness['tip']}")
 
-    st.divider()
+    render_poker_table(game, human, ss.human_index, ss.dealer_index)
 
-    # Community cards
-    st.subheader("Community Cards")
-    if game.community_cards:
-        render_cards(game.community_cards)
-    else:
-        st.caption("_(none yet — pre-flop)_")
+    if ss.last_feedback:
+        fb = ss.last_feedback
+        grade_icon = {"good": "✅", "ok": "🟡", "mistake": "❌"}[fb["grade"]]
+        color = {"good": "success", "ok": "warning", "mistake": "error"}[fb["grade"]]
+        getattr(st, color)(f"{grade_icon} **Last action:** {fb['explanation']}")
 
-    st.divider()
-
-    # Opponents
-    st.subheader("Opponents")
-    opp_cols = st.columns(len(game.players) - 1)
-    opp_idx = 0
-    for i, p in enumerate(game.players):
-        if i == ss.human_index:
-            continue
-        with opp_cols[opp_idx]:
-            status = "❌ Folded" if p.folded else ("💀 All-in" if p.is_all_in else "🟢 In")
-            st.markdown(f"**{p.name}**")
-            st.caption(f"${p.chips} chips  |  {status}")
-            st.caption(f"Bet this round: ${p.bet_this_round}")
-            render_cards(p.hole_cards, hidden=True)
-        opp_idx += 1
-
-    st.divider()
-
-    # Your hand + action feedback
-    left, right = st.columns([1, 1])
-    with left:
-        st.subheader("Your Hand")
-        render_cards(human.hole_cards)
-        st.caption(f"Chips: ${human.chips}  |  Bet this round: ${human.bet_this_round}")
-
-        if ss.last_feedback:
-            fb = ss.last_feedback
-            grade_icon = {"good": "✅", "ok": "🟡", "mistake": "❌"}[fb["grade"]]
-            color = {"good": "success", "ok": "warning", "mistake": "error"}[fb["grade"]]
-            getattr(st, color)(f"{grade_icon} **Last action:** {fb['explanation']}")
-
-    with right:
-        waiting_for_human = ss.action_queue and ss.action_queue[0] == ss.human_index
-        if waiting_for_human:
-            if ss.mode == "quant":
-                if not ss.show_quant:
-                    if st.button("🔬 Show quant analysis", use_container_width=True):
-                        ss.show_quant = True
-                        st.rerun()
-                else:
-                    render_quant_panel()
-                    if st.button("🙈 Hide analysis", use_container_width=True):
-                        ss.show_quant = False
-                        st.rerun()
-            elif ss.last_tip:
-                if not ss.show_tip:
-                    if st.button("💡 Show coaching tip", use_container_width=True):
-                        ss.show_tip = True
-                        st.rerun()
-                else:
-                    render_coaching_panel(ss.last_tip)
-                    if st.button("🙈 Hide tip", use_container_width=True):
-                        ss.show_tip = False
-                        st.rerun()
-
-    st.divider()
-
-    # Action buttons
     waiting_for_human = ss.action_queue and ss.action_queue[0] == ss.human_index
+
+    if waiting_for_human and ss.mode == "quant":
+        if not ss.show_quant:
+            if st.button("🔬 Show quant analysis", use_container_width=True):
+                ss.show_quant = True
+                st.rerun()
+        else:
+            render_quant_panel()
+            if st.button("🙈 Hide analysis", use_container_width=True):
+                ss.show_quant = False
+                st.rerun()
 
     if waiting_for_human and not human.folded:
         to_call = ss.to_call
-        st.subheader("Your Action")
-        btn_cols = st.columns(4)
+
+        if ss.last_tip:
+            render_coaching_tip_hover(ss.last_tip)
+
+        # Weak/marginal hand — show a quick decision checklist inline
+        if ss.last_tip and ss.last_tip.get("hand_quality") in ("Weak", "Marginal"):
+            with st.expander("🤔 Weak hand — what should I think about?", expanded=True):
+                st.markdown(f"""
+**Your hand:** {ss.last_tip.get('your_hand', '—')}
+**Win chance:** ~{ss.last_tip.get('equity_pct', '?')}%
+
+**Before acting, consider:**
+1. **Pot odds** — {ss.last_tip.get('pot_odds') or 'No bet yet, you can check for free.'}
+2. **Position** — {ss.last_tip.get('position_advice') or ss.last_tip.get('position', '—')}
+3. **Stack size** — You have ${human.chips}. Is this a good spot to risk chips?
+4. **Fold vs bluff** — With a weak hand, folding saves chips. A raise only works if opponents are likely to fold.
+
+**Bottom line:** {ss.last_tip.get('recommendation', '—')}
+""")
+
+        st.markdown("**Your Action**")
+        btn_cols = st.columns([2, 2, 3, 2])
 
         with btn_cols[0]:
             if to_call == 0:
@@ -813,21 +958,21 @@ def show_game():
                     handle_human_action(Action.CHECK)
                     st.rerun()
             else:
-                if st.button(f"📞 Call ${to_call}", use_container_width=True):
+                if st.button(f"📞 Call  ${to_call}", use_container_width=True, type="primary"):
                     handle_human_action(Action.CALL)
                     st.rerun()
 
         with btn_cols[1]:
-            if st.button("❌ Fold", use_container_width=True):
+            if st.button("✖ Fold", use_container_width=True):
                 handle_human_action(Action.FOLD)
                 st.rerun()
 
         with btn_cols[2]:
-            min_raise = max(ss.current_bet * 2, game.big_blind)
+            min_raise = min(max(ss.current_bet * 2, game.big_blind), human.chips)
             raise_amt = st.number_input(
                 "Raise to", min_value=min_raise, max_value=human.chips,
-                value=min(min_raise, human.chips), step=game.big_blind,
-                key="raise_input",
+                value=min_raise, step=game.big_blind,
+                key="raise_input", label_visibility="collapsed",
             )
 
         with btn_cols[3]:
@@ -844,18 +989,75 @@ def show_game():
             for entry in ss.street_log:
                 st.markdown(entry)
 
+    with st.expander("💬 Ask the Coach"):
+        if not llm_coach.is_running():
+            st.caption("Ollama is not running — start it locally to enable the AI coach.")
+        else:
+            question = st.text_input(
+                "Ask anything about this hand, your cards, or poker strategy:",
+                key="game_coach_question",
+            )
+            if st.button("Ask", key="game_coach_ask") and question.strip():
+                with st.spinner("Thinking..."):
+                    ss.ask_coach_answer = llm_coach.explain_concept(question)
+            if ss.ask_coach_answer:
+                st.markdown(ss.ask_coach_answer)
+
 
 # ---------------------------------------------------------------------------
 # Shared post-hand rendering helpers
 # ---------------------------------------------------------------------------
 
 def _render_hand_review(game: GameState, human_name: str):
-    st.subheader("📚 Hand Review — What could you improve?")
+    st.subheader("📚 Hand Review")
     notes = hand_review(game.history.decisions, human_name)
+
+    if not notes:
+        st.info("💡 No decisions recorded this hand.")
+        return
+
+    mistakes = [n for n in notes if n["assessment"] == "mistake"]
+    goods = [n for n in notes if n["assessment"] == "good"]
+
+    if mistakes:
+        st.error(f"⚠️ {len(mistakes)} decision(s) to work on across {len(notes)} street(s).")
+    elif goods:
+        st.success(f"✅ Solid hand — {len(goods)} strong decision(s) out of {len(notes)}.")
+    else:
+        st.warning("🟡 Decent play — no big mistakes, but room to optimize.")
+
     for note in notes:
-        icon = {"good": "✅", "mistake": "❌", "info": "💡"}[note["type"]]
-        color = {"good": "success", "mistake": "error", "info": "info"}[note["type"]]
-        getattr(st, color)(f"{icon} **{note['street']}:** {note['message']}")
+        a = note["assessment"]
+        icon = {"good": "✅", "ok": "🟡", "mistake": "❌"}.get(a, "💡")
+        label = f"{icon} {note['street']} — {note['action']}  ({note['hand_name']}, ~{note['equity_pct']}% equity)"
+        with st.expander(label, expanded=(a == "mistake")):
+            if note.get("went_well"):
+                st.markdown(f"**✅ What went well:** {note['went_well']}")
+            if note.get("risk"):
+                st.markdown(f"**⚠️ Risk:** {note['risk']}")
+            if note.get("ev_note"):
+                st.markdown(f"**📊 EV context:** {note['ev_note']}")
+
+
+def _render_folded_hand(game: GameState, human):
+    """Show the human the hand they folded — what they had and what it would have made."""
+    if not human.folded or not human.hole_cards:
+        return
+    st.divider()
+    st.subheader("🃏 Your Folded Hand")
+    st.caption("You folded — here's what you were holding and what you would have made:")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Your hole cards (folded)**")
+        render_cards(human.hole_cards)
+    if game.community_cards:
+        score, five, hand_name = best_hand(human.hole_cards, game.community_cards)
+        with col2:
+            st.markdown(f"**Would have made: {hand_name}**")
+            render_cards(five)
+    else:
+        with col2:
+            st.caption("Hand ended before community cards — no board to evaluate against.")
 
 
 def _render_chip_counts(players):
@@ -918,6 +1120,8 @@ def show_showdown():
             render_cards(p.hole_cards)
             st.caption(f"**{hand_name}**")
             render_cards(five)
+
+    _render_folded_hand(game, human)
 
     winners = game.showdown()
     game.award_pot(winners)
@@ -984,6 +1188,8 @@ def show_hand_over_no_showdown():
         st.error(f"💸 You folded. {winner.name} wins the pot of ${game.pot}.")
 
     game.award_pot([winner])
+
+    _render_folded_hand(game, human)
 
     st.divider()
     _render_hand_review(game, human.name)

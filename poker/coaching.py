@@ -325,8 +325,8 @@ def evaluate_action(
 
 def hand_review(history_decisions: list[dict], player_name: str) -> list[dict]:
     """
-    Review all of the human player's decisions from a hand.
-    Returns a list of coaching notes (only mistakes and notable moments).
+    Per-street breakdown of the player's decisions.
+    Each entry includes: what went well, the risk taken, and EV context.
     """
     notes = []
     player_decisions = [d for d in history_decisions if d["player"] == player_name]
@@ -335,11 +335,10 @@ def hand_review(history_decisions: list[dict], player_name: str) -> list[dict]:
         action = Action[d["action"]]
         hole = d["hole_cards"]
         community = d["community"]
-        amount = d["amount"]
+        street = d["street"]
 
-        # Re-evaluate using a dummy pot/to_call (we stored action but not to_call in history)
-        # For the review, we use equity vs action type only
         equity = _equity_estimate(hole, community)
+        equity_pct = round(equity * 100)
 
         if community:
             score, _, hand_name = best_hand(hole, community)
@@ -349,44 +348,81 @@ def hand_review(history_decisions: list[dict], player_name: str) -> list[dict]:
             hand_name = cat.replace("_", " ").title()
             hand_rank = -1
 
-        note = None
+        if action == Action.FOLD:
+            if equity >= 0.60 or hand_rank >= TWO_PAIR:
+                assessment = "mistake"
+                went_well = None
+                risk = f"~{equity_pct}% equity — there was real value in continuing."
+                ev_note = "Folding surrendered a +EV spot. Your hand was strong enough to profitably stay in."
+            elif equity >= 0.45:
+                assessment = "ok"
+                went_well = "Avoided a marginal spot where you could have lost more chips."
+                risk = f"~{equity_pct}% equity — continuing was borderline. You played it safe."
+                ev_note = "Close to break-even EV. Folding here is defensible but not clearly correct."
+            else:
+                assessment = "good"
+                went_well = f"Good discipline folding {hand_name} (~{equity_pct}% equity)."
+                risk = "Minimal — you correctly avoided putting chips in with a losing hand."
+                ev_note = f"Negative EV to continue at ~{equity_pct}% equity. Folding saved chips."
 
-        if action == Action.FOLD and (equity >= 0.60 or hand_rank >= TWO_PAIR):
-            note = {
-                "street": d["street"],
-                "type": "mistake",
-                "message": (
-                    f"You folded {hole} ({hand_name}) on the {d['street']}. "
-                    f"This hand had ~{round(equity*100)}% equity — folding here gave up value."
-                ),
-            }
-        elif action == Action.CALL and equity <= 0.30:
-            note = {
-                "street": d["street"],
-                "type": "mistake",
-                "message": (
-                    f"You called on the {d['street']} with {hole} ({hand_name}, ~{round(equity*100)}% equity). "
-                    f"This was likely too loose — weak hands lose money when called into raises."
-                ),
-            }
-        elif action in (Action.RAISE, Action.ALL_IN) and equity >= 0.65:
-            note = {
-                "street": d["street"],
-                "type": "good",
-                "message": (
-                    f"Good aggression on the {d['street']}! Raising with {hand_name} "
-                    f"(~{round(equity*100)}% equity) puts pressure on opponents when you're ahead."
-                ),
-            }
+        elif action == Action.CALL:
+            if equity >= 0.65:
+                assessment = "ok"
+                went_well = f"Strong hand ({hand_name}, ~{equity_pct}% equity) — you had the better of it."
+                risk = "Low risk. Main downside: calling instead of raising left value on the table."
+                ev_note = "Calling is +EV here, but a raise would extract even more expected value."
+            elif equity >= 0.45:
+                assessment = "good"
+                went_well = f"Reasonable call with {hand_name} (~{equity_pct}% equity)."
+                risk = "Moderate — you're in a coin-flip range. Outcome depends on remaining cards."
+                ev_note = f"~{equity_pct}% equity is around break-even. Calling is justified if pot odds support it."
+            else:
+                assessment = "mistake"
+                went_well = None
+                risk = f"High risk — calling with only ~{equity_pct}% equity means you lose more often than you win."
+                ev_note = f"Negative EV call at ~{equity_pct}% equity. Folding saves chips long-term."
 
-        if note:
-            notes.append(note)
+        elif action == Action.CHECK:
+            if equity >= 0.70:
+                assessment = "ok"
+                went_well = f"You had {hand_name} — a strong hand."
+                risk = "Checking with strong equity lets opponents see free cards that could beat you."
+                ev_note = f"~{equity_pct}% equity favors betting to build the pot while you're ahead."
+            else:
+                assessment = "good"
+                went_well = "Sensible check — no reason to build the pot with a marginal hand."
+                risk = "Low — you kept the pot small and gathered information."
+                ev_note = "Checking preserves chips and avoids building a pot you'd likely lose."
 
-    if not notes:
+        elif action in (Action.RAISE, Action.ALL_IN):
+            if equity >= 0.65:
+                assessment = "good"
+                went_well = f"Raising with {hand_name} (~{equity_pct}% equity) builds the pot when you're ahead."
+                risk = "Low — strong hand. Main risk is an opponent holding an even stronger hand."
+                ev_note = f"+EV raise. ~{equity_pct}% equity means you profit more often than not."
+            elif equity >= 0.45:
+                assessment = "ok"
+                went_well = f"Applied pressure with {hand_name}."
+                risk = f"Medium — ~{equity_pct}% equity means you're not safely ahead. If called, you need to improve."
+                ev_note = "Marginally +EV if opponents fold sometimes; closer to break-even if called frequently."
+            else:
+                assessment = "ok"
+                went_well = "Bluff — can work against tight opponents."
+                risk = f"High — ~{equity_pct}% equity means you lose most showdowns if called."
+                ev_note = "Bluff EV is positive only if opponents fold more than ~50% of the time."
+
+        else:
+            continue
+
         notes.append({
-            "street": "Overall",
-            "type": "info",
-            "message": "No major mistakes this hand — solid play overall.",
+            "street": street,
+            "action": action.name,
+            "hand_name": hand_name,
+            "equity_pct": equity_pct,
+            "assessment": assessment,
+            "went_well": went_well,
+            "risk": risk,
+            "ev_note": ev_note,
         })
 
     return notes
