@@ -773,14 +773,17 @@ def _player_status_info(player):
     return "Active", "#4caf50"
 
 
-def _table_card(card, hidden=False) -> str:
+def _table_card(card, hidden=False, large=False) -> str:
+    size = "20px" if large else "15px"
+    pad = "4px 10px" if large else "2px 7px"
     if hidden:
-        return '<span style="display:inline-block;background:#1a5276;color:white;border:1px solid #888;border-radius:4px;padding:2px 8px;font-size:16px;margin:1px;min-width:28px;text-align:center;">🂠</span>'
-    color = "#cc0000" if card.suit in ("♥", "♦") else "#222"
+        return f'<span style="display:inline-block;background:#1a5276;color:white;border:2px solid #5a8aaa;border-radius:5px;padding:{pad};font-size:{size};margin:2px;min-width:30px;text-align:center;">🂠</span>'
+    color = "#cc0000" if card.suit in ("♥", "♦") else "#111"
     return (
-        f'<span style="display:inline-block;background:#f8f8f8;color:{color};'
-        f'border:1px solid #999;border-radius:4px;padding:2px 8px;font-size:16px;'
-        f'margin:1px;min-width:28px;text-align:center;font-weight:bold;">'
+        f'<span style="display:inline-block;background:#ffffff;color:{color};'
+        f'border:2px solid #bbb;border-radius:5px;padding:{pad};font-size:{size};'
+        f'margin:2px;min-width:30px;text-align:center;font-weight:bold;'
+        f'box-shadow:1px 1px 3px rgba(0,0,0,0.3);">'
         f'{card.rank}{card.suit}</span>'
     )
 
@@ -809,11 +812,19 @@ def render_poker_table(game, human, human_index: int, dealer_index: int):
         status_text, status_color = _player_status_info(p)
         cards = "".join(_table_card(c, hidden=True) for c in p.hole_cards)
         badges = _role_badge(i)
-        fade = "opacity:0.4;" if p.folded else ""
         short = p.name.split("(")[0].strip()
+
+        if p.folded:
+            fold_overlay = '<div style="position:absolute;inset:0;background:rgba(0,0,0,0.55);border-radius:10px;display:flex;align-items:center;justify-content:center;z-index:2;"><span style="color:#ff5252;font-weight:bold;font-size:13px;letter-spacing:1px;">❌ FOLDED</span></div>'
+            border = "1px solid #3a1a1a"
+        else:
+            fold_overlay = ""
+            border = "1px solid #2a3050"
+
         opp_seats += f"""
-        <div style="background:rgba(15,20,42,0.95);border:1px solid #2a3050;border-radius:10px;
-                    padding:10px 12px;text-align:center;min-width:130px;position:relative;{fade}">
+        <div style="background:rgba(15,20,42,0.95);border:{border};border-radius:10px;
+                    padding:10px 12px;text-align:center;min-width:130px;position:relative;">
+            {fold_overlay}
             <div style="margin-bottom:3px;">{badges}</div>
             <div style="font-weight:bold;color:#ddd;font-size:13px;margin-bottom:4px;">{short}</div>
             <div style="margin:5px 0;">{cards}</div>
@@ -828,44 +839,68 @@ def render_poker_table(game, human, human_index: int, dealer_index: int):
         comm = '<span style="color:rgba(255,255,255,0.5);font-size:13px;">Pre-flop — no cards yet</span>'
 
     h_status_text, h_status_color = _player_status_info(human)
-    h_cards = "".join(_table_card(c) for c in human.hole_cards)
+    h_cards = "".join(_table_card(c, large=True) for c in human.hole_cards)
     h_dealer = _role_badge(human_index)
+
+    if human.folded:
+        h_fold_overlay = '<div style="position:absolute;inset:0;background:rgba(0,0,0,0.55);border-radius:10px;display:flex;align-items:center;justify-content:center;z-index:2;"><span style="color:#ff5252;font-weight:bold;font-size:14px;letter-spacing:1px;">❌ FOLDED</span></div>'
+        h_border = "2px solid #3a1a1a"
+    else:
+        h_fold_overlay = ""
+        h_border = "2px solid #ffd700"
 
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-body {{ background: #0d1117; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px 8px 8px; }}
+body {{ background: #0d1117; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 12px 6px 8px; }}
+.opps {{ display: flex; justify-content: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }}
+.felt {{
+    background: radial-gradient(ellipse at center,#1b6b2e 0%,#0e4a1c 65%,#072e10 100%);
+    border: 6px solid #4a2e0a;
+    border-radius: 80px / 44px;
+    padding: 14px 20px;
+    margin: 0 auto;
+    max-width: 100%;
+    text-align: center;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.7);
+}}
+.human-row {{ display: flex; justify-content: center; margin-top: 12px; }}
+.human-seat {{
+    background: rgba(12,32,12,0.95);
+    border: {h_border};
+    border-radius: 12px;
+    padding: 12px 18px;
+    text-align: center;
+    min-width: 160px;
+    position: relative;
+}}
 </style>
 </head><body>
-<div style="display:flex;justify-content:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
-    {opp_seats}
-</div>
-<div style="background:radial-gradient(ellipse at center,#1b6b2e 0%,#0e4a1c 65%,#072e10 100%);
-            border:7px solid #4a2e0a;border-radius:100px/55px;padding:18px 40px;
-            margin:0 auto;max-width:520px;text-align:center;
-            box-shadow:0 6px 20px rgba(0,0,0,0.7);">
+<div class="opps">{opp_seats}</div>
+<div class="felt">
     <div style="color:rgba(255,255,255,0.45);font-size:10px;text-transform:uppercase;letter-spacing:2px;margin-bottom:7px;">
         Community Cards — {game.street.value}
     </div>
     <div style="margin:5px 0;">{comm}</div>
     <div style="color:#ffd700;font-size:15px;font-weight:bold;margin-top:9px;">💰 Pot: ${game.pot}</div>
 </div>
-<div style="display:flex;justify-content:center;margin-top:12px;">
-    <div style="background:rgba(12,32,12,0.95);border:2px solid #ffd700;border-radius:10px;
-                padding:10px 14px;text-align:center;min-width:150px;position:relative;">
+<div class="human-row">
+    <div class="human-seat">
+        {h_fold_overlay}
         <div style="margin-bottom:4px;">{h_dealer}</div>
         <div style="color:#ffd700;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">You</div>
-        <div style="font-weight:bold;color:#ddd;font-size:13px;margin-bottom:4px;">{human.name}</div>
-        <div style="margin:5px 0;">{h_cards}</div>
-        <div style="font-size:12px;color:#ffd700;margin:3px 0;">💰 ${human.chips}</div>
-        <div style="font-size:11px;color:#999;">Bet: ${human.bet_this_round}</div>
-        <div style="font-size:11px;margin-top:3px;color:{h_status_color};">● {h_status_text}</div>
+        <div style="font-weight:bold;color:#eee;font-size:14px;margin-bottom:6px;">{human.name}</div>
+        <div style="margin:6px 0;">{h_cards}</div>
+        <div style="font-size:13px;color:#ffd700;margin:4px 0;font-weight:bold;">💰 ${human.chips}</div>
+        <div style="font-size:11px;color:#aaa;">Bet this street: ${human.bet_this_round}</div>
+        <div style="font-size:11px;margin-top:4px;color:{h_status_color};font-weight:bold;">● {h_status_text}</div>
     </div>
 </div>
 </body></html>"""
 
-    components.html(html, height=400, scrolling=False)
+    components.html(html, height=460, scrolling=False)
 
 
 def render_coaching_tip_hover(tip: dict):
@@ -895,16 +930,17 @@ def render_coaching_tip_hover(tip: dict):
 
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-body {{ background: transparent; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 4px 0; }}
-.wrap {{ position: relative; display: inline-block; }}
+body {{ background: transparent; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 4px 0; overflow: visible; }}
+.wrap {{ position: relative; display: inline-block; width: 100%; }}
 .trigger {{
     display: inline-block;
     background: #1565c0;
     color: #fff;
     border-radius: 8px;
-    padding: 8px 18px;
+    padding: 9px 20px;
     font-size: 14px;
     cursor: default;
     user-select: none;
@@ -914,14 +950,13 @@ body {{ background: transparent; font-family: -apple-system, BlinkMacSystemFont,
     position: absolute;
     top: 110%;
     left: 0;
+    right: 0;
     background: #1a1f2e;
     border: 1px solid #3a4060;
     border-radius: 10px;
-    padding: 14px 16px;
-    min-width: 300px;
-    max-width: 400px;
+    padding: 16px;
     z-index: 1000;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.7);
     text-align: left;
 }}
 .wrap:hover .popup {{ display: block; }}
@@ -930,15 +965,18 @@ body {{ background: transparent; font-family: -apple-system, BlinkMacSystemFont,
 <div class="wrap">
     <div class="trigger">{icon} Hover for coaching tip</div>
     <div class="popup">
-        <div style="font-weight:bold;color:#fff;font-size:15px;margin-bottom:8px;">{icon} Coaching Tip</div>
-        <div style="font-size:13px;color:{qcolor};margin-bottom:6px;">Hand: <b>{tip['hand_quality']}</b> &nbsp;·&nbsp; Win: ~{tip['equity_pct']}%</div>
+        <div style="font-weight:bold;color:#fff;font-size:15px;margin-bottom:10px;">{icon} Coaching Tip</div>
+        <div style="font-size:13px;color:{qcolor};margin-bottom:8px;">
+            Hand: <b>{tip['hand_quality']}</b> &nbsp;·&nbsp; Win chance: ~{tip['equity_pct']}%
+        </div>
         {extras}
-        <div style="font-size:13px;color:#90caf9;font-style:italic;margin-top:8px;border-top:1px solid #333;padding-top:8px;">💬 {rec}</div>
+        <div style="font-size:13px;color:#90caf9;font-style:italic;margin-top:10px;
+                    border-top:1px solid #2a3050;padding-top:10px;">💬 {rec}</div>
     </div>
 </div>
 </body></html>"""
 
-    components.html(html, height=280, scrolling=False)
+    components.html(html, height=320, scrolling=False)
 
 
 # ---------------------------------------------------------------------------
