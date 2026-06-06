@@ -170,6 +170,7 @@ def init_state():
         "kuhn_log": [],
         "kuhn_ev_summary": None,
         "ask_coach_answer": "",
+        "setup_mode": "standard",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -183,9 +184,30 @@ ss = st.session_state
 # Phase: setup
 # ---------------------------------------------------------------------------
 
+def _mode_card(title, badge, description, selected, key):
+    border = "2px solid #4caf50" if selected else "1px solid #2a2a3a"
+    bg = "rgba(76,175,80,0.07)" if selected else "rgba(18,18,28,0.6)"
+    check = '<span style="float:right;color:#4caf50;font-size:1rem;">✓</span>' if selected else ""
+    badge_html = f'<span style="font-size:0.65rem;background:#4caf50;color:#fff;border-radius:4px;padding:1px 7px;margin-left:8px;vertical-align:middle;">{badge}</span>' if badge else ""
+
+    st.markdown(f"""
+<div style="border:{border};border-radius:12px;padding:18px 20px;background:{bg};
+            margin-bottom:8px;min-height:158px;">
+    <div style="font-size:1.05rem;font-weight:700;margin-bottom:10px;">
+        {title}{badge_html}{check}
+    </div>
+    <div style="font-size:0.82rem;color:#bbb;line-height:1.65;">{description}</div>
+</div>""", unsafe_allow_html=True)
+
+    label = "✓ Selected" if selected else "Select"
+    clicked = st.button(label, key=key, use_container_width=True,
+                        type="primary" if selected else "secondary")
+    return clicked
+
+
 def show_setup():
     st.title("🃏 Learn to Play Poker")
-    st.caption("Texas Hold'em — play hands, get coached, improve over time")
+    st.caption("Texas Hold'em · Coaching on every decision · Two modes to choose from")
 
     saved = load_progress()
 
@@ -224,67 +246,64 @@ def show_setup():
         small_blind = st.number_input("Small blind", min_value=5, value=10, step=5)
         st.caption(f"Big blind: ${small_blind * 2}")
     with c_tut:
-        st.write("")  # vertical alignment spacer
+        st.write("")
         show_tut = st.checkbox("Show tutorial first", value=True)
 
     st.divider()
+    st.markdown("#### How do you want to play?")
 
-    # --- Game mode selector ---
-    st.markdown("#### Choose your mode")
-    mode_cols = st.columns(2)
+    c1, c2 = st.columns(2)
+    with c1:
+        clicked_std = _mode_card(
+            title="🃏 Standard",
+            badge="Recommended for beginners",
+            description=(
+                "Learn poker strategy through real play.<br>"
+                "· Coaching tip on every decision<br>"
+                "· Instant grading after each action<br>"
+                "· Hand review with EV context<br>"
+                "· Tracks your leaks over time"
+            ),
+            selected=(ss.setup_mode == "standard"),
+            key="sel_standard",
+        )
+        if clicked_std:
+            ss.setup_mode = "standard"
+            st.rerun()
 
-    with mode_cols[0]:
-        st.markdown("""
-<div style="border:2px solid #4caf50;border-radius:10px;padding:16px 18px;height:100%;">
-<div style="font-size:1.2rem;font-weight:bold;margin-bottom:6px;">🃏 Standard <span style="font-size:0.7rem;background:#4caf50;color:#fff;border-radius:4px;padding:2px 7px;margin-left:6px;">Recommended</span></div>
-<div style="font-size:0.85rem;color:#ccc;line-height:1.5;">
-Learn poker strategy through play.<br><br>
-• Hover-to-reveal coaching tips before each action<br>
-• Instant feedback grading every decision<br>
-• Per-street hand review after each hand<br>
-• Adaptive tracking of your leaks
-</div>
-</div>
-""", unsafe_allow_html=True)
-
-    with mode_cols[1]:
-        st.markdown("""
-<div style="border:1px solid #444;border-radius:10px;padding:16px 18px;height:100%;">
-<div style="font-size:1.2rem;font-weight:bold;margin-bottom:6px;">🔬 Quant Trading</div>
-<div style="font-size:0.85rem;color:#ccc;line-height:1.5;">
-Learn the math behind every decision.<br><br>
-• Live EV, Kelly Criterion, and equity analysis<br>
-• One quant concept taught per hand<br>
-• Challenge questions to apply what you learned<br>
-• Kuhn Poker Lab for GTO theory
-</div>
-</div>
-""", unsafe_allow_html=True)
-
-    mode = st.radio(
-        "mode_select",
-        options=["standard", "quant"],
-        format_func=lambda m: {"standard": "🃏 Standard (Recommended)", "quant": "🔬 Quant Trading"}[m],
-        horizontal=True,
-        label_visibility="collapsed",
-    )
+    with c2:
+        clicked_quant = _mode_card(
+            title="🔬 Quant Trading",
+            badge="",
+            description=(
+                "Learn the math behind each decision.<br>"
+                "· Live EV, Kelly Criterion &amp; equity<br>"
+                "· One quant concept taught per hand<br>"
+                "· Challenge questions to apply it<br>"
+                "· Kuhn Poker Lab for GTO theory"
+            ),
+            selected=(ss.setup_mode == "quant"),
+            key="sel_quant",
+        )
+        if clicked_quant:
+            ss.setup_mode = "quant"
+            st.rerun()
 
     st.divider()
 
-    # --- Opponents info + start ---
-    left, right = st.columns([2, 1])
+    left, right = st.columns([3, 1])
     with left:
-        st.markdown("**Your opponents:**  Alex (Tight) · Blake (Loose) · Casey (Aggressive)")
-        st.caption("Tight = only plays strong hands · Loose = calls most things · Aggressive = raises to pressure you")
+        st.caption("Opponents: **Alex** (Tight — plays strong hands only) · **Blake** (Loose — calls most things) · **Casey** (Aggressive — raises to pressure you)")
     with right:
         if st.button("▶ Start Game", type="primary", use_container_width=True):
             progress = _default_progress(player_name, chips)
             progress["tutorial_seen"] = not show_tut
             save_progress(progress)
-            ss.mode = mode
+            ss.mode = ss.setup_mode
             _start_game(player_name, chips, small_blind, progress)
 
-    if st.button("🔬 Kuhn Poker Lab — GTO Theory", use_container_width=False):
+    st.markdown("&nbsp;")
+    if st.button("🔬 Open Kuhn Poker Lab (GTO Theory)", use_container_width=False):
         ss.mode = "quant"
         ss.phase = "kuhn_lab"
         ss.kuhn_hand = None
