@@ -765,6 +765,113 @@ def render_quant_panel():
 # Poker table visual
 # ---------------------------------------------------------------------------
 
+RANK_VALUE = ['2','3','4','5','6','7','8','9','10','J','Q','K','A']
+
+def _strategic_hand_notes(hole_cards, community_cards) -> list[str]:
+    """Return bullet-point strategic observations about the current cards."""
+    if len(hole_cards) != 2:
+        return []
+    c1, c2 = hole_cards
+    r1, r2, s1, s2 = c1.rank, c2.rank, c1.suit, c2.suit
+    v1 = RANK_VALUE.index(r1) if r1 in RANK_VALUE else 0
+    v2 = RANK_VALUE.index(r2) if r2 in RANK_VALUE else 0
+    suit_name = {"♠": "spades", "♥": "hearts", "♦": "diamonds", "♣": "clubs"}
+    notes = []
+
+    # Pocket pair
+    if r1 == r2:
+        notes.append(f"**Pocket {r1}s** — you already have a pair before the flop. Watch for a third {r1} on the board (trips), which would be very strong.")
+    else:
+        # High card strength
+        high, low = (r1, r2) if v1 > v2 else (r2, r1)
+        hv = max(v1, v2)
+        if {r1, r2} == {'A', 'K'}:
+            notes.append("**Ace-King (Big Slick)** — one of the best starting hands. Strong pair potential with top kicker on almost any board.")
+        elif {r1, r2} == {'A', 'Q'} or {r1, r2} == {'A', 'J'}:
+            notes.append(f"**Ace-{low}** — solid hand. An ace on the board gives you top pair with a strong kicker.")
+        elif 'A' in [r1, r2]:
+            notes.append(f"**Ace with a low kicker** — the ace is powerful but the {low} is weak. An ace on the board gives top pair, but be cautious if someone bets big — they may have a better kicker.")
+        elif hv >= 10:
+            notes.append(f"**Two high cards ({r1}, {r2})** — decent starting hand. Look for a pair on the flop using either card.")
+        else:
+            notes.append(f"**Low unconnected cards** — limited high-card strength. Hard to make top pair.")
+
+        # Connectivity
+        gap = abs(v1 - v2)
+        if 1 <= gap <= 2:
+            lo_v, hi_v = min(v1, v2), max(v1, v2)
+            lo_r, hi_r = RANK_VALUE[lo_v], RANK_VALUE[hi_v]
+            notes.append(f"**Connected cards** ({r1}-{r2}) — straight potential. Look for cards between {lo_r} and {hi_r} on the board to build a run of 5.")
+        elif gap <= 4:
+            notes.append(f"**Gapped cards** ({r1}-{r2}, gap of {gap}) — weak straight potential. Would need very specific board cards.")
+
+    # Suited
+    if s1 == s2:
+        sn = suit_name.get(s1, s1)
+        notes.append(f"**Suited** (both {sn}) — flush potential! If 3 more {sn} appear on the board across the flop/turn/river, you'll have a flush.")
+    else:
+        notes.append(f"**Off-suit** — no flush possible. Focus on pair and straight potential.")
+
+    # Community card analysis
+    if community_cards:
+        board_ranks = [c.rank for c in community_cards]
+        board_suits = [c.suit for c in community_cards]
+
+        # Pair on board
+        for hr in [r1, r2]:
+            if hr in board_ranks:
+                notes.append(f"**You paired the {hr}** on the board — you have a pair! The strength depends on your kicker and whether the board is dangerous.")
+                break
+
+        # Flush draw or flush
+        if s1 == s2:
+            matching = board_suits.count(s1)
+            total_suited = 2 + matching
+            sn = suit_name.get(s1, s1)
+            if total_suited >= 5:
+                notes.append(f"**You have a flush!** (5 {sn}) — very strong hand.")
+            elif total_suited == 4:
+                notes.append(f"**Flush draw** — one more {sn} on the board completes your flush.")
+            elif total_suited == 3:
+                notes.append(f"**Backdoor flush draw** — need 2 more {sn} cards. Unlikely but possible.")
+
+        # Paired board (dangerous)
+        from collections import Counter
+        rank_counts = Counter(board_ranks)
+        if any(v >= 2 for v in rank_counts.values()):
+            notes.append("⚠️ **Board is paired** — someone could have three of a kind or a full house. Be careful if opponents bet big.")
+
+    return notes
+
+
+def _action_context(to_call: int, pot: int, human_chips: int, tip: dict | None) -> dict:
+    """Return short situational captions for each action button."""
+    equity_pct = tip["equity_pct"] if tip else None
+
+    # Check / Call
+    if to_call == 0:
+        check_text = "Stay in for free — no chips at risk. Good when you want to see the next card cheaply."
+    else:
+        pot_after = pot + to_call
+        break_even = round(to_call / pot_after * 100) if pot_after else 0
+        if equity_pct is not None:
+            ev_sign = "✓ profitable" if equity_pct > break_even else "✗ losing long-run"
+            check_text = f"Need >{break_even}% equity to break even · You have ~{equity_pct}% → {ev_sign}"
+        else:
+            check_text = f"Need >{break_even}% equity to break even on this call."
+
+    # Fold
+    if to_call == 0:
+        fold_text = f"Give up your cards. You'd be leaving a free check on the table — usually wrong."
+    else:
+        fold_text = f"Save ${to_call} but forfeit any claim to the ${pot} pot. Right when your hand is unlikely to win."
+
+    # Raise
+    raise_text = "Force opponents to put in more chips or fold. Best with a strong hand or as a calculated bluff."
+
+    return {"call_check": check_text, "fold": fold_text, "raise": raise_text}
+
+
 def _player_status_info(player):
     if player.folded:
         return "Folded", "#888888"
@@ -993,21 +1100,24 @@ def show_game():
 
     if waiting_for_human and not human.folded:
         to_call = ss.to_call
+        ctx = _action_context(to_call, game.pot, human.chips, ss.last_tip)
 
-        # Weak/marginal hand — show a quick decision checklist inline
+        # Card reading guide
+        hand_notes = _strategic_hand_notes(human.hole_cards, game.community_cards)
+        if hand_notes:
+            with st.expander("🔍 Reading your hand — what to look for", expanded=False):
+                for note in hand_notes:
+                    st.markdown(f"- {note}")
+
+        # Weak/marginal checklist
         if ss.last_tip and ss.last_tip.get("hand_quality") in ("Weak", "Marginal"):
-            with st.expander("🤔 Weak hand — what should I think about?", expanded=True):
+            with st.expander("🤔 Weak hand — what should I consider?", expanded=False):
                 st.markdown(f"""
-**Your hand:** {ss.last_tip.get('your_hand', '—')}
-**Win chance:** ~{ss.last_tip.get('equity_pct', '?')}%
-
-**Before acting, consider:**
-1. **Pot odds** — {ss.last_tip.get('pot_odds') or 'No bet yet, you can check for free.'}
-2. **Position** — {ss.last_tip.get('position_advice') or ss.last_tip.get('position', '—')}
-3. **Stack size** — You have ${human.chips}. Is this a good spot to risk chips?
-4. **Fold vs bluff** — With a weak hand, folding saves chips. A raise only works if opponents are likely to fold.
-
-**Bottom line:** {ss.last_tip.get('recommendation', '—')}
+- **Pot odds** — {ss.last_tip.get('pot_odds') or 'No bet yet — you can check for free, no chips at risk.'}
+- **Position** — {ss.last_tip.get('position_advice') or ss.last_tip.get('position', '—')}
+- **Stack** — You have ${human.chips}. Protect your stack in marginal spots.
+- **Fold vs bluff** — A raise only forces folds if opponents are likely to give up. With a weak hand, folding is often the clean play.
+- **Bottom line** — {ss.last_tip.get('recommendation', '—')}
 """)
 
         st.markdown("**Your Action**")
@@ -1022,11 +1132,13 @@ def show_game():
                 if st.button(f"📞 Call  ${to_call}", use_container_width=True, type="primary"):
                     handle_human_action(Action.CALL)
                     st.rerun()
+            st.caption(ctx["call_check"])
 
         with btn_cols[1]:
             if st.button("✖ Fold", use_container_width=True):
                 handle_human_action(Action.FOLD)
                 st.rerun()
+            st.caption(ctx["fold"])
 
         with btn_cols[2]:
             min_raise = min(max(ss.current_bet * 2, game.big_blind), human.chips)
@@ -1040,6 +1152,7 @@ def show_game():
             if st.button("⬆ Raise", use_container_width=True, type="primary"):
                 handle_human_action(Action.RAISE, raise_to=raise_amt)
                 st.rerun()
+            st.caption(ctx["raise"])
 
     elif not waiting_for_human and ss.phase == "betting":
         st.info("⏳ Waiting for opponents...")
