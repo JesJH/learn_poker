@@ -788,7 +788,7 @@ def _table_card(card, hidden=False, large=False) -> str:
     )
 
 
-def render_poker_table(game, human, human_index: int, dealer_index: int):
+def render_poker_table(game, human, human_index: int, dealer_index: int, tip=None):
     players = game.players
     n = len(players)
 
@@ -849,141 +849,108 @@ def render_poker_table(game, human, human_index: int, dealer_index: int):
         h_fold_overlay = ""
         h_border = "2px solid #ffd700"
 
+    # Build coaching tip HTML to embed inside the table iframe
+    tip_html = ""
+    if tip:
+        icon = {"success": "✅", "warning": "⚠️", "info": "💡"}.get(tip["tip_level"], "💡")
+        qcolor = {"Premium": "#4caf50", "Strong": "#4caf50", "Playable": "#ffd700",
+                  "Marginal": "#ff9800", "Weak": "#f44336"}.get(tip["hand_quality"], "#aaa")
+        rec = tip.get("recommendation", "").replace('"', "&quot;").replace("<", "&lt;")
+        extras = ""
+        if tip.get("your_hand"):
+            extras += f'<div style="font-size:12px;color:#ccc;margin-bottom:4px;"><b>Your hand:</b> {tip["your_hand"]}</div>'
+        if tip.get("pot_odds"):
+            extras += f'<div style="font-size:12px;color:#ccc;margin-bottom:4px;"><b>Pot odds:</b> {tip["pot_odds"]}</div>'
+        if tip.get("position_advice"):
+            extras += f'<div style="font-size:12px;color:#ccc;margin-bottom:4px;"><b>Position:</b> {tip["position_advice"]}</div>'
+
+        tip_html = f"""
+<div style="display:flex;justify-content:center;margin-top:10px;">
+  <div class="tip-wrap">
+    <div class="tip-trigger">{icon} Hover for coaching tip</div>
+    <div class="tip-popup">
+      <div style="font-weight:bold;color:#fff;font-size:14px;margin-bottom:8px;">{icon} Coaching Tip</div>
+      <div style="font-size:12px;color:{qcolor};margin-bottom:6px;">Hand: <b>{tip['hand_quality']}</b> · Win: ~{tip['equity_pct']}%</div>
+      {extras}
+      <div style="font-size:12px;color:#90caf9;font-style:italic;margin-top:8px;border-top:1px solid #2a3050;padding-top:8px;">💬 {rec}</div>
+    </div>
+  </div>
+</div>"""
+
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-body {{ background: #0d1117; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 12px 6px 16px; }}
-.opps {{ display: flex; justify-content: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }}
+body {{ background: #0d1117; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 12px 6px 12px; }}
+.opps {{ display: flex; justify-content: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }}
 .felt {{
     background: radial-gradient(ellipse at center,#1b6b2e 0%,#0e4a1c 65%,#072e10 100%);
     border: 6px solid #4a2e0a;
     border-radius: 80px / 44px;
-    padding: 14px 20px;
+    padding: 12px 20px;
     margin: 0 auto;
     max-width: 100%;
     text-align: center;
     box-shadow: 0 6px 20px rgba(0,0,0,0.7);
 }}
-.human-row {{ display: flex; justify-content: center; margin-top: 12px; }}
+.human-row {{ display: flex; justify-content: center; margin-top: 10px; }}
 .human-seat {{
     background: rgba(12,32,12,0.95);
     border: {h_border};
     border-radius: 12px;
-    padding: 12px 18px;
+    padding: 10px 18px;
     text-align: center;
     min-width: 160px;
     position: relative;
 }}
+.tip-wrap {{ position: relative; display: inline-block; }}
+.tip-trigger {{
+    background: #1565c0; color: #fff; border-radius: 8px;
+    padding: 8px 18px; font-size: 13px; cursor: default; user-select: none;
+}}
+.tip-popup {{
+    display: none;
+    position: absolute;
+    bottom: 110%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 320px;
+    background: #1a1f2e;
+    border: 1px solid #3a4060;
+    border-radius: 10px;
+    padding: 14px;
+    z-index: 100;
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.7);
+    text-align: left;
+}}
+.tip-wrap:hover .tip-popup {{ display: block; }}
 </style>
 </head><body>
 <div class="opps">{opp_seats}</div>
 <div class="felt">
-    <div style="color:rgba(255,255,255,0.45);font-size:10px;text-transform:uppercase;letter-spacing:2px;margin-bottom:7px;">
+    <div style="color:rgba(255,255,255,0.45);font-size:10px;text-transform:uppercase;letter-spacing:2px;margin-bottom:6px;">
         Community Cards — {game.street.value}
     </div>
-    <div style="margin:5px 0;">{comm}</div>
-    <div style="color:#ffd700;font-size:15px;font-weight:bold;margin-top:9px;">💰 Pot: ${game.pot}</div>
+    <div style="margin:4px 0;">{comm}</div>
+    <div style="color:#ffd700;font-size:14px;font-weight:bold;margin-top:8px;">💰 Pot: ${game.pot}</div>
 </div>
 <div class="human-row">
     <div class="human-seat">
         {h_fold_overlay}
-        <div style="margin-bottom:4px;">{h_dealer}</div>
+        <div style="margin-bottom:3px;">{h_dealer}</div>
         <div style="color:#ffd700;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">You</div>
-        <div style="font-weight:bold;color:#eee;font-size:14px;margin-bottom:6px;">{human.name}</div>
-        <div style="margin:6px 0;">{h_cards}</div>
-        <div style="font-size:13px;color:#ffd700;margin:4px 0;font-weight:bold;">💰 ${human.chips}</div>
+        <div style="font-weight:bold;color:#eee;font-size:13px;margin-bottom:4px;">{human.name}</div>
+        <div style="margin:5px 0;">{h_cards}</div>
+        <div style="font-size:12px;color:#ffd700;margin:3px 0;font-weight:bold;">💰 ${human.chips}</div>
         <div style="font-size:11px;color:#aaa;">Bet this street: ${human.bet_this_round}</div>
-        <div style="font-size:11px;margin-top:4px;color:{h_status_color};font-weight:bold;">● {h_status_text}</div>
+        <div style="font-size:11px;margin-top:3px;color:{h_status_color};font-weight:bold;">● {h_status_text}</div>
     </div>
 </div>
-<script>
-  // Tell the parent iframe to resize to fit actual content
-  window.onload = function() {{
-    const h = document.body.scrollHeight;
-    window.parent.postMessage({{type: 'streamlit:setFrameHeight', height: h}}, '*');
-  }};
-</script>
+{tip_html}
 </body></html>"""
 
-    components.html(html, height=540, scrolling=False)
-
-
-def render_coaching_tip_hover(tip: dict):
-    """Show coaching tip on hover — no click needed."""
-    if not tip:
-        return
-
-    level = tip["tip_level"]
-    icon = {"success": "✅", "warning": "⚠️", "info": "💡"}.get(level, "💡")
-    qual_colors = {
-        "Premium": "#4caf50", "Strong": "#4caf50",
-        "Playable": "#ffd700", "Marginal": "#ff9800", "Weak": "#f44336",
-    }
-    qcolor = qual_colors.get(tip["hand_quality"], "#aaa")
-    rec = tip.get("recommendation", "").replace('"', "&quot;").replace("<", "&lt;")
-    your_hand = tip.get("your_hand", "").replace("<", "&lt;")
-    pos_advice = tip.get("position_advice", "").replace("<", "&lt;")
-    pot_odds_text = tip.get("pot_odds", "").replace("<", "&lt;") if tip.get("pot_odds") else ""
-
-    extras = ""
-    if your_hand:
-        extras += f'<div style="font-size:13px;color:#ccc;margin-bottom:5px;line-height:1.4;"><b>Your hand:</b> {your_hand}</div>'
-    if pot_odds_text:
-        extras += f'<div style="font-size:13px;color:#ccc;margin-bottom:5px;line-height:1.4;"><b>Pot odds:</b> {pot_odds_text}</div>'
-    if pos_advice:
-        extras += f'<div style="font-size:13px;color:#ccc;margin-bottom:5px;line-height:1.4;"><b>Position:</b> {pos_advice}</div>'
-
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-* {{ box-sizing: border-box; margin: 0; padding: 0; }}
-body {{ background: transparent; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 4px 0; overflow: visible; }}
-.wrap {{ position: relative; display: inline-block; width: 100%; }}
-.trigger {{
-    display: inline-block;
-    background: #1565c0;
-    color: #fff;
-    border-radius: 8px;
-    padding: 9px 20px;
-    font-size: 14px;
-    cursor: default;
-    user-select: none;
-}}
-.popup {{
-    display: none;
-    position: absolute;
-    top: 110%;
-    left: 0;
-    right: 0;
-    background: #1a1f2e;
-    border: 1px solid #3a4060;
-    border-radius: 10px;
-    padding: 16px;
-    z-index: 1000;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.7);
-    text-align: left;
-}}
-.wrap:hover .popup {{ display: block; }}
-</style>
-</head><body>
-<div class="wrap">
-    <div class="trigger">{icon} Hover for coaching tip</div>
-    <div class="popup">
-        <div style="font-weight:bold;color:#fff;font-size:15px;margin-bottom:10px;">{icon} Coaching Tip</div>
-        <div style="font-size:13px;color:{qcolor};margin-bottom:8px;">
-            Hand: <b>{tip['hand_quality']}</b> &nbsp;·&nbsp; Win chance: ~{tip['equity_pct']}%
-        </div>
-        {extras}
-        <div style="font-size:13px;color:#90caf9;font-style:italic;margin-top:10px;
-                    border-top:1px solid #2a3050;padding-top:10px;">💬 {rec}</div>
-    </div>
-</div>
-</body></html>"""
-
-    components.html(html, height=400, scrolling=False)
+    components.html(html, height=510, scrolling=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1003,15 +970,15 @@ def show_game():
         if weakness:
             st.warning(f"**📌 Focus area:** {weakness['label']} — {weakness['tip']}")
 
-    render_poker_table(game, human, ss.human_index, ss.dealer_index)
+    waiting_for_human = ss.action_queue and ss.action_queue[0] == ss.human_index
+    tip = ss.last_tip if (waiting_for_human and not human.folded) else None
+    render_poker_table(game, human, ss.human_index, ss.dealer_index, tip=tip)
 
     if ss.last_feedback:
         fb = ss.last_feedback
         grade_icon = {"good": "✅", "ok": "🟡", "mistake": "❌"}[fb["grade"]]
         color = {"good": "success", "ok": "warning", "mistake": "error"}[fb["grade"]]
         getattr(st, color)(f"{grade_icon} **Last action:** {fb['explanation']}")
-
-    waiting_for_human = ss.action_queue and ss.action_queue[0] == ss.human_index
 
     if waiting_for_human and ss.mode == "quant":
         if not ss.show_quant:
@@ -1026,9 +993,6 @@ def show_game():
 
     if waiting_for_human and not human.folded:
         to_call = ss.to_call
-
-        if ss.last_tip:
-            render_coaching_tip_hover(ss.last_tip)
 
         # Weak/marginal hand — show a quick decision checklist inline
         if ss.last_tip and ss.last_tip.get("hand_quality") in ("Weak", "Marginal"):
