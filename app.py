@@ -180,22 +180,19 @@ def init_state():
 init_state()
 ss = st.session_state
 
+# Global theme — slightly lighter than Streamlit's near-black default
+st.markdown("""<style>
+.stApp { background-color: #1c2030 !important; }
+section[data-testid="stSidebar"] { background-color: #222538 !important; }
+div[data-testid="stVerticalBlock"] > div > div[data-testid="stVerticalBlock"] {
+    background-color: transparent;
+}
+</style>""", unsafe_allow_html=True)
+
 # ---------------------------------------------------------------------------
 # Phase: setup
 # ---------------------------------------------------------------------------
 
-def _mode_card_html(title, badge, description, selected):
-    border = "2px solid #4caf50" if selected else "1px solid #2a2a3a"
-    bg = "rgba(76,175,80,0.07)" if selected else "rgba(18,18,28,0.6)"
-    check = '<span style="float:right;color:#4caf50;font-size:1rem;">✓</span>' if selected else ""
-    badge_html = f'<span style="font-size:0.65rem;background:#4caf50;color:#fff;border-radius:4px;padding:1px 7px;margin-left:8px;vertical-align:middle;">{badge}</span>' if badge else ""
-    st.markdown(f"""
-<div style="border:{border};border-radius:12px;padding:18px 20px;background:{bg};min-height:180px;">
-    <div style="font-size:1.05rem;font-weight:700;margin-bottom:10px;">
-        {title}{badge_html}{check}
-    </div>
-    <div style="font-size:0.82rem;color:#bbb;line-height:1.8;">{description}</div>
-</div>""", unsafe_allow_html=True)
 
 
 def show_setup():
@@ -247,46 +244,34 @@ def show_setup():
     st.divider()
     st.markdown("#### How do you want to play?")
 
+    # CSS for mode-selector card buttons — safe: continue/fresh buttons are only shown
+    # when saved progress exists, at which point this section never renders (early return above)
+    st.markdown("""<style>
+div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-secondary"]) button {
+    white-space: pre-line !important;
+    text-align: left !important;
+    height: auto !important;
+    min-height: 168px !important;
+    padding: 18px 20px !important;
+    line-height: 1.75 !important;
+    font-size: 0.84rem !important;
+}
+</style>""", unsafe_allow_html=True)
+
+    std_label = "🃏 Standard   ★ Recommended\n\nFocus on poker strategy — fold, call, or raise.\n\n· Coaching tip before every decision\n· Instant grading after each action\n· Post-hand review: what went well\n· Tracks your decision patterns over time"
+    quant_label = "🔬 Quant Trading\n\nSame game, but every hand teaches a trading concept.\n\n· Expected Value: is this call profitable long-term?\n· Kelly Criterion: optimal bet sizing for your edge\n· Monte Carlo: simulated win % vs. pot odds\n· Challenge question each hand to apply the concept"
+
     c1, c2 = st.columns(2)
     with c1:
-        _mode_card_html(
-            title="🃏 Standard",
-            badge="Recommended for beginners",
-            description=(
-                "Focus on poker strategy — when to fold, call, or raise based on your cards and position.<br><br>"
-                "· Coaching tip before every decision<br>"
-                "· Instant grading after each action<br>"
-                "· Post-hand review: what went well and what didn't<br>"
-                "· Tracks your decision patterns over time"
-            ),
-            selected=(ss.setup_mode == "standard"),
-        )
+        if st.button(std_label, key="mode_std", use_container_width=True,
+                     type="primary" if ss.setup_mode == "standard" else "secondary"):
+            ss.setup_mode = "standard"
+            st.rerun()
     with c2:
-        _mode_card_html(
-            title="🔬 Quant Trading",
-            badge="",
-            description=(
-                "Same poker game, but every hand teaches a quantitative finance concept — the same math used in trading.<br><br>"
-                "· <b>Expected Value</b>: is this call profitable long-term?<br>"
-                "· <b>Kelly Criterion</b>: how much should you bet given your edge?<br>"
-                "· <b>Monte Carlo equity</b>: simulated win probability vs. pot odds<br>"
-                "· Challenge questions each hand to apply the concept"
-            ),
-            selected=(ss.setup_mode == "quant"),
-        )
-
-    # Single radio below both cards — green border above communicates the selection
-    selected_mode = st.radio(
-        "mode",
-        options=["standard", "quant"],
-        index=0 if ss.setup_mode == "standard" else 1,
-        format_func=lambda m: "🃏 Standard" if m == "standard" else "🔬 Quant Trading",
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-    if selected_mode != ss.setup_mode:
-        ss.setup_mode = selected_mode
-        st.rerun()
+        if st.button(quant_label, key="mode_quant", use_container_width=True,
+                     type="primary" if ss.setup_mode == "quant" else "secondary"):
+            ss.setup_mode = "quant"
+            st.rerun()
 
     st.divider()
 
