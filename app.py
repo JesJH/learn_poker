@@ -209,7 +209,8 @@ def show_setup():
     st.title("🃏 Learn to Play Poker")
     st.caption("Texas Hold'em · Coaching on every decision · Two modes to choose from")
 
-    saved = load_progress()
+    # Only show "continue" if this browser session has already started a game
+    saved = ss.progress
 
     if saved:
         st.divider()
@@ -230,6 +231,7 @@ def show_setup():
                 p = pathlib.Path("progress.json")
                 if p.exists():
                     p.unlink()
+                ss.progress = None
                 st.rerun()
         return
 
@@ -389,19 +391,11 @@ def show_tutorial():
     )
 
     st.divider()
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("▶ I'm ready — deal me in!", type="primary", use_container_width=True):
-            ss.progress["tutorial_seen"] = True
-            save_progress(ss.progress)
-            ss.phase = "hand_start"
-            st.rerun()
-    with col_b:
-        if st.button("⏭ Skip tutorial", use_container_width=True):
-            ss.progress["tutorial_seen"] = True
-            save_progress(ss.progress)
-            ss.phase = "hand_start"
-            st.rerun()
+    if st.button("▶ I'm ready — deal me in!", type="primary"):
+        ss.progress["tutorial_seen"] = True
+        save_progress(ss.progress)
+        ss.phase = "hand_start"
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -872,6 +866,34 @@ def _action_context(to_call: int, pot: int, human_chips: int, tip: dict | None) 
     return {"call_check": check_text, "fold": fold_text, "raise": raise_text}
 
 
+def _last_actions(street_log: list) -> dict:
+    """Parse street_log and return {player_name: last_action_text}."""
+    result = {}
+    for entry in street_log:
+        clean = entry.replace("**", "")
+        if ":" in clean:
+            name, action = clean.split(":", 1)
+            result[name.strip()] = action.strip()
+    return result
+
+
+def _action_badge(action_text: str) -> str:
+    """Return a coloured HTML badge for a player's last action."""
+    t = action_text.upper()
+    if "FOLD" in t:
+        color, bg = "#ff5252", "rgba(255,82,82,0.15)"
+    elif "RAISE" in t or "ALL_IN" in t:
+        color, bg = "#ff9800", "rgba(255,152,0,0.15)"
+    elif "CALL" in t:
+        color, bg = "#4caf50", "rgba(76,175,80,0.15)"
+    elif "CHECK" in t:
+        color, bg = "#90caf9", "rgba(144,202,249,0.12)"
+    else:
+        color, bg = "#aaa", "rgba(170,170,170,0.1)"
+    label = action_text.split()[0].capitalize() + (" " + " ".join(action_text.split()[1:]) if len(action_text.split()) > 1 else "")
+    return f'<span style="display:inline-block;background:{bg};color:{color};border:1px solid {color};border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600;margin-top:4px;">{label}</span>'
+
+
 def _player_status_info(player):
     if player.folded:
         return "Folded", "#888888"
@@ -895,7 +917,7 @@ def _table_card(card, hidden=False, large=False) -> str:
     )
 
 
-def render_poker_table(game, human, human_index: int, dealer_index: int, tip=None):
+def render_poker_table(game, human, human_index: int, dealer_index: int, tip=None, last_actions=None):
     players = game.players
     n = len(players)
 
@@ -928,16 +950,18 @@ def render_poker_table(game, human, human_index: int, dealer_index: int, tip=Non
             fold_overlay = ""
             border = "1px solid #2a3050"
 
+        last_act = (last_actions or {}).get(p.name, "")
+        last_act_badge = _action_badge(last_act) if last_act else ""
         opp_seats += f"""
         <div style="background:rgba(15,20,42,0.95);border:{border};border-radius:10px;
                     padding:10px 12px;text-align:center;min-width:130px;position:relative;">
             {fold_overlay}
             <div style="margin-bottom:3px;">{badges}</div>
-            <div style="font-weight:bold;color:#ddd;font-size:13px;margin-bottom:4px;">{short}</div>
-            <div style="margin:5px 0;">{cards}</div>
-            <div style="font-size:12px;color:#ffd700;margin:3px 0;">💰 ${p.chips}</div>
+            <div style="font-weight:bold;color:#ddd;font-size:13px;margin-bottom:2px;">{short}</div>
+            <div style="margin:4px 0;">{cards}</div>
+            <div style="font-size:12px;color:#ffd700;margin:2px 0;">💰 ${p.chips}</div>
             <div style="font-size:11px;color:#999;">Bet: ${p.bet_this_round}</div>
-            <div style="font-size:11px;margin-top:3px;color:{status_color};">● {status_text}</div>
+            {last_act_badge}
         </div>"""
 
     if game.community_cards:
@@ -1079,7 +1103,8 @@ def show_game():
 
     waiting_for_human = ss.action_queue and ss.action_queue[0] == ss.human_index
     tip = ss.last_tip if (waiting_for_human and not human.folded) else None
-    render_poker_table(game, human, ss.human_index, ss.dealer_index, tip=tip)
+    render_poker_table(game, human, ss.human_index, ss.dealer_index,
+                       tip=tip, last_actions=_last_actions(ss.street_log))
 
     if ss.last_feedback:
         fb = ss.last_feedback
@@ -1101,24 +1126,42 @@ def show_game():
     if waiting_for_human and not human.folded:
         to_call = ss.to_call
         ctx = _action_context(to_call, game.pot, human.chips, ss.last_tip)
+        tip = ss.last_tip
 
-        # Card reading guide
+        # --- Integrated strategy panel ---
         hand_notes = _strategic_hand_notes(human.hole_cards, game.community_cards)
-        if hand_notes:
-            with st.expander("🔍 Reading your hand — what to look for", expanded=False):
-                for note in hand_notes:
-                    st.markdown(f"- {note}")
+        is_weak = tip and tip.get("hand_quality") in ("Weak", "Marginal")
 
-        # Weak/marginal checklist
-        if ss.last_tip and ss.last_tip.get("hand_quality") in ("Weak", "Marginal"):
-            with st.expander("🤔 Weak hand — what should I consider?", expanded=False):
-                st.markdown(f"""
-- **Pot odds** — {ss.last_tip.get('pot_odds') or 'No bet yet — you can check for free, no chips at risk.'}
-- **Position** — {ss.last_tip.get('position_advice') or ss.last_tip.get('position', '—')}
-- **Stack** — You have ${human.chips}. Protect your stack in marginal spots.
-- **Fold vs bluff** — A raise only forces folds if opponents are likely to give up. With a weak hand, folding is often the clean play.
-- **Bottom line** — {ss.last_tip.get('recommendation', '—')}
-""")
+        with st.container(border=True):
+            left, right = st.columns([1, 1])
+
+            with left:
+                st.markdown("**🔍 Your Hand**")
+                for note in hand_notes[:3]:
+                    st.markdown(f"<span style='font-size:0.85rem;'>• {note}</span>", unsafe_allow_html=True)
+
+            with right:
+                if to_call > 0 and tip:
+                    pot_after = game.pot + to_call
+                    break_even = round(to_call / pot_after * 100) if pot_after else 0
+                    eq = tip["equity_pct"]
+                    ev_color = "#4caf50" if eq > break_even else "#f44336"
+                    ev_label = "Profitable call ✓" if eq > break_even else "Losing call ✗"
+                    st.markdown("**💰 Pot Odds vs Your Equity**")
+                    st.markdown(
+                        f"<div style='font-size:1.05rem;font-weight:bold;'>"
+                        f"Need <b>{break_even}%</b> &nbsp;·&nbsp; "
+                        f"You have <span style='color:{ev_color};font-size:1.1rem;'><b>{eq}%</b></span>"
+                        f"</div>"
+                        f"<div style='color:{ev_color};font-size:0.9rem;font-weight:600;margin-top:2px;'>{ev_label}</div>",
+                        unsafe_allow_html=True,
+                    )
+                elif to_call == 0:
+                    st.markdown("**💡 Free action**")
+                    st.caption("No bet to call — you can check and see the next card at no cost.")
+                if is_weak and tip:
+                    st.markdown(f"**⚠️ Recommendation**")
+                    st.caption(tip.get("recommendation", "—"))
 
         st.markdown("**Your Action**")
         btn_cols = st.columns([2, 2, 3, 2])
@@ -1157,11 +1200,6 @@ def show_game():
     elif not waiting_for_human and ss.phase == "betting":
         st.info("⏳ Waiting for opponents...")
         st.rerun()
-
-    if ss.street_log:
-        with st.expander("Action log"):
-            for entry in ss.street_log:
-                st.markdown(entry)
 
     with st.expander("💬 Ask the Coach"):
         if not llm_coach.is_running():
