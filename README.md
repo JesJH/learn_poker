@@ -2,7 +2,7 @@
 
 A Texas Hold'em poker learning game with two modes: **Standard** for learning poker strategy, and **Quant Trading** for understanding the math behind every decision. Built with Python and Streamlit — playable in your browser, no install needed.
 
-🃏 **[Play it live →](https://learn-to-play-poker.streamlit.app)**
+🃏 **[Play it live →](https://learn-poker.streamlit.app)**
 
 ---
 

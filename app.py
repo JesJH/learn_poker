@@ -173,6 +173,7 @@ def init_state():
         "ask_coach_answer": "",
         "setup_mode": "standard",
         "chips_at_hand_start": {},   # {player_name: chips} snapshot before blinds
+        "eliminated_players": [],    # players removed from game (0 chips), shown as OUT seats
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -188,6 +189,34 @@ st.markdown("""<style>
 section[data-testid="stSidebar"] { background-color: #222538 !important; }
 div[data-testid="stVerticalBlock"] > div > div[data-testid="stVerticalBlock"] {
     background-color: transparent;
+}
+/* Action button colors — scoped via :has() on hidden marker spans */
+div[data-testid="stColumn"]:has(.action-col-call) button {
+    background-color: #1b5e20 !important;
+    border-color: #1b5e20 !important;
+    color: white !important;
+}
+div[data-testid="stColumn"]:has(.action-col-fold) button {
+    background-color: #7f1d1d !important;
+    border-color: #7f1d1d !important;
+    color: white !important;
+}
+div[data-testid="stColumn"]:has(.action-col-raise) button {
+    background-color: #7c2d12 !important;
+    border-color: #7c2d12 !important;
+    color: #fcd34d !important;
+}
+div[data-testid="stColumn"]:has(.action-col-call) button:hover {
+    background-color: #2e7d32 !important;
+    border-color: #2e7d32 !important;
+}
+div[data-testid="stColumn"]:has(.action-col-fold) button:hover {
+    background-color: #991b1b !important;
+    border-color: #991b1b !important;
+}
+div[data-testid="stColumn"]:has(.action-col-raise) button:hover {
+    background-color: #9a3412 !important;
+    border-color: #9a3412 !important;
 }
 </style>""", unsafe_allow_html=True)
 
@@ -259,7 +288,7 @@ div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-secondar
     st.divider()
 
     # --- Quick setup row ---
-    c_name, c_chips, c_blind, c_tut = st.columns([2, 1.5, 1.5, 2])
+    c_name, c_chips, c_blind = st.columns([2, 1.5, 1.5])
     with c_name:
         player_name = st.text_input("Your name", value="Player", max_chars=20)
     with c_chips:
@@ -268,9 +297,6 @@ div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-secondar
     with c_blind:
         small_blind = st.number_input("Small blind", min_value=5, value=10, step=5)
         st.caption(f"Big blind: ${small_blind * 2}")
-    with c_tut:
-        st.write("")
-        show_tut = st.checkbox("Show tutorial first", value=True)
 
     st.divider()
     st.markdown("#### How do you want to play?")
@@ -306,13 +332,20 @@ div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-secondar
 
     st.divider()
 
-    left, right = st.columns([3, 1])
-    with left:
-        st.caption("Opponents: **Alex** (Tight — plays strong hands only) · **Blake** (Loose — calls most things) · **Casey** (Aggressive — raises to pressure you)")
-    with right:
-        if st.button("▶ Start Game", type="primary", use_container_width=True):
+    st.caption("Opponents: **Alex** (Tight — plays strong hands only) · **Blake** (Loose — calls most things) · **Casey** (Aggressive — raises to pressure you)")
+
+    btn_left, btn_right = st.columns(2)
+    with btn_left:
+        if st.button("▶ Play Game", type="primary", use_container_width=True):
             progress = _default_progress(player_name, chips)
-            progress["tutorial_seen"] = not show_tut
+            progress["tutorial_seen"] = True  # skip tutorial
+            save_progress(progress)
+            ss.mode = ss.setup_mode
+            _start_game(player_name, chips, small_blind, progress)
+    with btn_right:
+        if st.button("📖 Tutorial First", use_container_width=True):
+            progress = _default_progress(player_name, chips)
+            progress["tutorial_seen"] = False  # show tutorial
             save_progress(progress)
             ss.mode = ss.setup_mode
             _start_game(player_name, chips, small_blind, progress)
@@ -341,6 +374,7 @@ def _start_game(player_name: str, chips: int, small_blind: int, progress: dict):
     ss.dealer_index = 0
     ss.hand_number = 0
     ss.progress = progress
+    ss.eliminated_players = []
 
     if not progress.get("tutorial_seen"):
         ss.phase = "tutorial"
@@ -500,7 +534,8 @@ def _advance_to_human_or_ai():
         # AI acts
         to_call = ss.current_bet - player.bet_this_round
         action, amount = ai_decide(player, to_call, ss.current_bet,
-                                   game.community_cards, game.pot)
+                                   game.community_cards, game.pot,
+                                   big_blind=game.big_blind)
         _apply_action(player, action, amount, game)
         game.history.record(player.name, game.street, action, amount,
                             player.hole_cards, game.community_cards)
@@ -932,7 +967,7 @@ def _table_card(card, hidden=False, large=False) -> str:
     )
 
 
-def render_poker_table(game, human, human_index: int, dealer_index: int, tip=None, last_actions=None, action_queue=None):
+def render_poker_table(game, human, human_index: int, dealer_index: int, tip=None, last_actions=None, action_queue=None, eliminated_players=None):
     players = game.players
     n = len(players)
 
@@ -996,6 +1031,21 @@ def render_poker_table(game, human, human_index: int, dealer_index: int, tip=Non
                 {bet_label}
             </div>
             <div style="margin-top:3px;">{last_act_html}</div>
+        </div>"""
+
+    # Append seats for eliminated (busted-out) players
+    for ep in (eliminated_players or []):
+        ep_short = ep.name.split("(")[0].strip()
+        opp_seats += f"""
+        <div class="seat" style="border:1px solid #1a1a1a;opacity:0.45;">
+            <div style="position:absolute;inset:0;background:rgba(0,0,0,0.65);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2;">
+                <span style="color:#666;font-weight:bold;font-size:12px;letter-spacing:2px;">OUT</span>
+                <span style="color:#444;font-size:10px;margin-top:2px;">eliminated</span>
+            </div>
+            <div>
+                <div style="font-weight:bold;color:#444;font-size:13px;margin-bottom:2px;">{ep_short}</div>
+                <div style="font-size:11px;color:#333;">💀 $0</div>
+            </div>
         </div>"""
 
     if game.community_cards:
@@ -1209,7 +1259,8 @@ def show_game():
     tip = ss.last_tip if (waiting_for_human and not human.folded) else None
     render_poker_table(game, human, ss.human_index, ss.dealer_index,
                        tip=tip, last_actions=_last_actions(ss.street_log),
-                       action_queue=ss.action_queue)
+                       action_queue=ss.action_queue,
+                       eliminated_players=ss.eliminated_players)
 
     if ss.last_feedback:
         fb = ss.last_feedback
@@ -1223,19 +1274,22 @@ def show_game():
         tip = ss.last_tip
 
         # --- Action buttons first, right under the table ---
-        btn_cols = st.columns([2, 2, 3, 2])
+        # Marker spans (display:none) let CSS :has() target each column's button color
+        btn_cols = st.columns([2, 2, 2, 2])
         with btn_cols[0]:
+            st.markdown('<span class="action-col-call" style="display:none"></span>', unsafe_allow_html=True)
             if to_call == 0:
                 if st.button("✅ Check", use_container_width=True):
                     handle_human_action(Action.CHECK)
                     st.rerun()
             else:
-                if st.button(f"📞 Call  ${to_call}", use_container_width=True, type="primary"):
+                if st.button(f"📞 Call  ${to_call}", use_container_width=True):
                     handle_human_action(Action.CALL)
                     st.rerun()
             st.caption(ctx["call_check"])
 
         with btn_cols[1]:
+            st.markdown('<span class="action-col-fold" style="display:none"></span>', unsafe_allow_html=True)
             if st.button("✖ Fold", use_container_width=True):
                 handle_human_action(Action.FOLD)
                 st.rerun()
@@ -1246,11 +1300,13 @@ def show_game():
             raise_amt = st.number_input(
                 "Raise to", min_value=min_raise, max_value=human.chips,
                 value=min_raise, step=game.big_blind,
-                key="raise_input", label_visibility="collapsed",
+                key="raise_input",
             )
+            st.caption(f"Min: ${min_raise} · step: ${game.big_blind}")
 
         with btn_cols[3]:
-            if st.button("⬆ Raise", use_container_width=True, type="primary"):
+            st.markdown('<span class="action-col-raise" style="display:none"></span>', unsafe_allow_html=True)
+            if st.button("⬆ Raise", use_container_width=True):
                 handle_human_action(Action.RAISE, raise_to=raise_amt)
                 st.rerun()
             st.caption(ctx["raise"])
@@ -1523,6 +1579,13 @@ def _advance_to_next_hand(game: GameState, human_won: bool):
         ss.challenge_feedback = None
 
     ss.dealer_index = (ss.dealer_index + 1) % len(game.players)
+
+    # Capture newly busted AI players before they're removed
+    for p in game.players:
+        if p.chips <= 0 and p.player_type != PlayerType.HUMAN:
+            if not any(e.name == p.name for e in ss.eliminated_players):
+                ss.eliminated_players.append(p)
+
     game.players = [p for p in game.players if p.chips > 0]
 
     if len(game.players) < 2 or human.chips <= 0:

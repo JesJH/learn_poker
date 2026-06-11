@@ -4,15 +4,17 @@ Project context for Claude Code. Read this before making any changes.
 
 ## What this is
 
-A Texas Hold'em poker learning game built in Python + Streamlit. Deployable to Streamlit Cloud for free. No paid APIs. This is a portfolio piece.
+A Texas Hold'em poker learning game built in Python + Streamlit. The goal is to **teach poker through probability and expected value** — every decision comes with coaching on pot odds, equity, and EV. A Quant Trading spin-off mode maps each concept to quantitative finance.
 
-**Live app:** https://learn-to-play-poker.streamlit.app  
+Deployable to Streamlit Cloud for free. No paid APIs. This is a portfolio piece.
+
+**Live app:** https://learn-poker.streamlit.app  
 **Run locally:** `streamlit run app.py` → http://localhost:8501
 
 ## Two game modes
 
-- **Standard** — poker strategy focus. Coaching tip on every decision, instant grading, post-hand review.
-- **Quant Trading** — same game but each hand teaches a quant finance concept (EV, Kelly Criterion, Monte Carlo equity, pot odds as break-even analysis). Also includes a Kuhn Poker Lab for GTO theory.
+- **Standard** — poker strategy focus. Coaching tip on every decision, instant grading, post-hand review. Teaches pot odds, hand strength, and decision-making using probability and EV.
+- **Quant Trading** — same game but each hand explicitly maps to a quant finance concept (EV, Kelly Criterion, Monte Carlo equity, pot odds as break-even analysis). Also includes a Kuhn Poker Lab for GTO theory.
 
 ## Stack
 
@@ -102,3 +104,15 @@ Streamlit sanitizes HTML in `st.markdown()`. Anything with cards or the poker ta
 - Multiplayer or online opponents
 - Hand history persistence across sessions
 - Sound effects or animations
+
+## Session notes (2026-06-09)
+
+Changes made in this session:
+- **AI variability fix**: Aggressive AI was going all-in too often; now caps raises at ~55% of stack, mixes calls/raises 70/30 on medium hands, and only bets pot-sized on very strong hands. Tight and Loose AIs also got more varied behavior (slow-plays, mixed sizing).
+- **Min raise**: Confirmed correct rule — `max(current_bet * 2, big_blind)`. The `step=big_blind` on the number_input means raises go up in BB increments (correct for Hold'em). Now passes `big_blind` to AI decision function so AI bets correctly post-flop.
+- **Eliminated players shown as OUT seats**: Players who bust out (chips=0) are stored in `ss.eliminated_players` and displayed as dimmed "OUT" seats at the table. Previously they vanished entirely from the table.
+- **Button colors**: Check/Call = green, Fold = dark red, Raise = orange-brown. Implemented via CSS `:has()` selector on hidden marker `<span>` elements injected before each button. Requires Chrome 105+ / Firefox 121+ / Safari 15.4+ (all modern browsers).
+- **Raise input**: Narrowed from 3-unit to 2-unit column. The `st.number_input` already supports typing a value directly and using +/− step buttons; added a caption to make this visible.
+- **Tutorial flow**: Replaced "Show tutorial first" checkbox with two explicit buttons — **Play Game** (skips tutorial) and **Tutorial First** (shows tutorial).
+- **Project description**: Updated to reflect core goal: teaching poker via probability and EV, with a quant trading spin-off.
+- **Streamlit URL**: Updated to https://learn-poker.streamlit.app
