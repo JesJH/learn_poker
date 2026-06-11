@@ -94,7 +94,7 @@ Streamlit sanitizes HTML in `st.markdown()`. Anything with cards or the poker ta
 
 ## Git / deploy
 
-- Repo: https://github.com/JesJH/learn_to_play_poker
+- Repo: https://github.com/JesJH/learn_poker
 - Push only at large milestones, not after every small change.
 - Streamlit Cloud auto-deploys from main branch within ~1 min of push.
 
